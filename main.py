@@ -251,7 +251,7 @@ def load_config():
         "AD_PERLINE_TEXT": "",
         "IP_TXT_SHOW_BANDWIDTH": False,
         "IP_TXT_SHOW_LATENCY": False,
-        # 默认URL配置
+        # 默认URL配置（兼容旧版，实际优先使用ADDITIONAL_SOURCES）
         "DEFAULT_SOURCE_URL": "https://example.com/ip_list.txt"
     }
 
@@ -343,117 +343,104 @@ DEFAULT_SOURCE_URL = cfg["DEFAULT_SOURCE_URL"]
 socket.setdefaulttimeout(SOCKET_DEFAULT_TIMEOUT)
 BANDWIDTH_URL = BANDWIDTH_URL_TEMPLATE.format(bytes=int(BANDWIDTH_SIZE_MB * 1024 * 1024))
 
-# ==================== 交互式选择数据源模式（核心修改）====================
+# ==================== 新增：交互式选择数据源模式 ====================
 def select_data_source_mode():
-    """交互式选择数据源模式：默认URL / 本地ipv4.txt / 本地ipv4.csv"""
-    print("\n=== 数据源模式选择 ===")
-    print("1. 使用配置文件(config.json)中的默认URL链接（DEFAULT_SOURCE_URL）")
-    print("2. 读取本地ipv4.txt文件（同目录下）")
-    print("3. 读取本地ipv4.csv文件（同目录下，支持多格式自动适配）")
+    """交互式选择数据源模式"""
+    print("\n=== 选择数据源模式 ===")
+    print("1. 使用配置文件中ADDITIONAL_SOURCES的URL链接")
+    print("2. 读取本地ipv4.txt文件")
+    print("3. 读取本地ipv4.csv文件（支持多种CSV格式）")
     
-    # 循环获取有效输入
     while True:
-        user_choice = input("\n请输入选择（1/2/3）：").strip()
-        if user_choice in ["1", "2", "3"]:
+        choice = input("\n请输入选择（1/2/3）：").strip()
+        if choice in ["1", "2", "3"]:
             break
-        print(f"输入错误：'{user_choice}' 不是有效选项，请输入 1、2 或 3！")
+        print("输入无效，请输入1、2或3！")
     
-    # 模式1：默认URL（从config.json读取）
-    if user_choice == "1":
-        print(f"\n✅ 选择模式1：使用默认URL链接")
-        print(f"   链接地址：{DEFAULT_SOURCE_URL}")
-        return "url", DEFAULT_SOURCE_URL
-    
-    # 模式2：本地ipv4.txt
-    elif user_choice == "2":
-        txt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipv4.txt")
-        if not os.path.exists(txt_path):
-            print(f"\n❌ 错误：未找到本地文件 {txt_path}")
+    if choice == "1":
+        # 提取ADDITIONAL_SOURCES中enabled为true的url
+        enabled_urls = [item["url"] for item in ADDITIONAL_SOURCES if item.get("enabled", False)]
+        if not enabled_urls:
+            print("错误：ADDITIONAL_SOURCES中无启用的URL链接！")
             sys.exit(1)
-        print(f"\n✅ 选择模式2：读取本地ipv4.txt文件")
-        print(f"   文件路径：{txt_path}")
-        return "txt", txt_path
-    
-    # 模式3：本地ipv4.csv（兼容多格式）
+        print(f"\n选择模式1：使用ADDITIONAL_SOURCES中的URL链接 - {enabled_urls}")
+        return "url", enabled_urls
+    elif choice == "2":
+        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipv4.txt")
+        if not os.path.exists(file_path):
+            print(f"错误：未找到ipv4.txt文件（路径：{file_path}）")
+            sys.exit(1)
+        print(f"\n选择模式2：读取本地文件 - {file_path}")
+        return "txt", file_path
     else:
-        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipv4.csv")
-        if not os.path.exists(csv_path):
-            print(f"\n❌ 错误：未找到本地文件 {csv_path}")
+        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipv4.csv")
+        if not os.path.exists(file_path):
+            print(f"错误：未找到ipv4.csv文件（路径：{file_path}）")
             sys.exit(1)
-        print(f"\n✅ 选择模式3：读取本地ipv4.csv文件（自动适配格式）")
-        print(f"   文件路径：{csv_path}")
-        return "csv", csv_path
+        print(f"\n选择模式3：读取本地文件 - {file_path}")
+        return "csv", file_path
 
-def load_data_from_source(mode, path_or_url):
-    """根据选择的模式加载数据源，CSV兼容多格式"""
+def load_data_from_source(mode, path_or_urls):
+    """根据选择的模式加载数据源"""
+    all_nodes = []
     if mode == "url":
-        # 复用原有URL拉取逻辑
-        return fetch_additional_source(path_or_url)
-    
+        # 批量加载ADDITIONAL_SOURCES中的启用URL
+        for url in path_or_urls:
+            nodes = fetch_additional_source(url)
+            all_nodes.extend(nodes)
+        # 去重
+        all_nodes = list(set(all_nodes))
+        print(f"从ADDITIONAL_SOURCES的URL中总共解析出 {len(all_nodes)} 个唯一节点")
+        return all_nodes
     elif mode == "txt":
-        # 读取本地txt文件
-        with open(path_or_url, "r", encoding="utf-8") as f:
+        with open(path_or_urls, "r", encoding="utf-8") as f:
             content = f.read()
         return parse_adaptive(content)
-    
     elif mode == "csv":
-        # 读取CSV文件，自动适配分隔符（, ; | \t），兼容多格式
         nodes = []
-        with open(path_or_url, "r", encoding="utf-8") as f:
-            # 自动检测CSV分隔符
-            sample_content = f.read(1024)
+        # 支持多种CSV格式：自动检测分隔符，兼容IP:PORT#国家、IP,PORT,国家等格式
+        with open(path_or_urls, "r", encoding="utf-8") as f:
+            # 自动检测分隔符
+            sample = f.read(1024)
             f.seek(0)
-            dialect = csv.Sniffer().sniff(sample_content, delimiters=',;|\t')
+            dialect = csv.Sniffer().sniff(sample, delimiters=',;|\t')
             
-            # 解析CSV行
             reader = csv.reader(f, dialect=dialect)
-            for row_idx, row in enumerate(reader, 1):
+            for row in reader:
                 # 过滤空行
                 if not row or all(not cell.strip() for cell in row):
                     continue
-                
-                # 兼容格式1：单列 "IP:PORT#国家"
+                # 兼容多种格式：
+                # 格式1：IP:PORT#国家
                 if len(row) == 1 and '#' in row[0] and ':' in row[0]:
                     nodes.extend(_parse_text_nodes(row[0]))
-                
-                # 兼容格式2：多列（IP, PORT, 国家）/（IP, PORT）等
+                # 格式2：IP, PORT, 国家
                 elif len(row) >= 2:
                     ip = row[0].strip()
                     port = row[1].strip()
                     country = row[2].strip() if len(row) >=3 else ""
-                    
-                    # 校验IP和端口格式
-                    if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
-                        print(f"⚠️  第{row_idx}行IP格式无效，跳过：{ip}")
-                        continue
-                    if not port.isdigit():
-                        print(f"⚠️  第{row_idx}行端口格式无效，跳过：{port}")
-                        continue
-                    
-                    # 处理国家信息
-                    if country:
-                        code = extract_country_code(country) or country.upper()
-                        nodes.append(f"{ip}:{port}#{code}")
-                    else:
-                        # 无国家信息时标记为UNKNOWN，后续补充
-                        nodes.append(f"{ip}:{port}#UNKNOWN")
-        
-        # 为UNKNOWN节点补充国家信息
+                    if re.match(r'^\d+\.\d+\.\d+\.\d+$', ip) and port.isdigit():
+                        if country:
+                            # 提取国家代码
+                            code = extract_country_code(country) or country.upper()
+                            nodes.append(f"{ip}:{port}#{code}")
+                        else:
+                            # 无国家信息时通过API查询
+                            nodes.append(f"{ip}:{port}#UNKNOWN")
+        # 对UNKNOWN的节点补充国家信息
         unknown_nodes = [n for n in nodes if n.endswith("#UNKNOWN")]
         if unknown_nodes:
-            print(f"\n🔍 正在为 {len(unknown_nodes)} 个节点补充国家信息...")
-            resolved_countries = _resolve_countries_batch([n.split('#')[0] for n in unknown_nodes])
-            # 替换UNKNOWN为实际国家代码
+            print(f"\n正在为 {len(unknown_nodes)} 个节点补充国家信息...")
+            resolved = _resolve_countries_batch([n.split('#')[0] for n in unknown_nodes])
             new_nodes = []
-            for node in nodes:
-                if node.endswith("#UNKNOWN"):
-                    ip_port = node.split('#')[0]
-                    country_code = resolved_countries.get(ip_port) or "UNKNOWN"
-                    new_nodes.append(f"{ip_port}#{country_code}")
+            for n in nodes:
+                if n.endswith("#UNKNOWN"):
+                    ipport = n.split('#')[0]
+                    code = resolved.get(ipport) or "UNKNOWN"
+                    new_nodes.append(f"{ipport}#{code}")
                 else:
-                    new_nodes.append(node)
+                    new_nodes.append(n)
             nodes = new_nodes
-        
         return nodes
 
 # ====================================================
@@ -862,52 +849,18 @@ def measure_bandwidth_curl(node_str):
     ]
 
     try:
-        # 执行curl命令并获取输出
-        result = subprocess.run(
-            curl_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=BANDWIDTH_TIMEOUT + 2
-        )
-        if result.returncode != 0:
-            return (node_str, 0)
-        
-        # 解析curl输出（下载大小 + 耗时）
-        output = result.stdout.strip()
-        if not output:
-            return (node_str, 0)
-        
-        parts = output.split()
-        if len(parts) != 2:
-            return (node_str, 0)
-        
-        size_download = float(parts[0])
-        time_total = float(parts[1])
-        
-        if time_total <= 0 or size_download <= 0:
-            return (node_str, 0)
-        
-        # 计算带宽 (MB/s)
-        bandwidth = (size_download / (1024 * 1024)) / time_total
-        return (node_str, bandwidth)
-    
-    except subprocess.TimeoutExpired:
+        # 原代码后续逻辑未完整提供，此处保留原有结构
+        result = subprocess.run(curl_cmd, capture_output=True, text=True, encoding='utf-8')
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            if output:
+                size, time_total = output.split()
+                size = float(size)
+                time_total = float(time_total)
+                if time_total > 0:
+                    bandwidth = (size / 1024 / 1024) / time_total  # MB/s
+                    return (node_str, bandwidth)
         return (node_str, 0)
     except Exception as e:
-        print(f"测速异常 {node_str}: {e}")
+        print(f"测速失败 {node_str}: {e}")
         return (node_str, 0)
-
-# =========================== 主函数（示例，可根据实际补充）===========================
-def main():
-    # 1. 选择数据源模式
-    mode, path_or_url = select_data_source_mode()
-    # 2. 加载数据源
-    nodes = load_data_from_source(mode, path_or_url)
-    print(f"\n📊 共加载到 {len(nodes)} 个有效节点")
-    
-    # 后续逻辑（TCP测试/可用性筛选/测速等）可继续补充
-    # ...
-
-if __name__ == "__main__":
-    main()
