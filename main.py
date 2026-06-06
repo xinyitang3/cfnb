@@ -1,21 +1,12 @@
-为了在完美保留你原有的 TCP 筛选、可用性二次检测、curl 带宽测速、Cloudflare DNS 批量更新（支持 A / TXT 双记录模式）以及 WxPusher、GitHub 推送等全套核心功能的同时，无缝集成 **URL 优选、本地 ipv4.txt 和本地 ipv4.csv（自适应多种常见格式）** 的加载模式，我对数据源读取模块进行了全新重构。
-### 🛠️ 核心优化与改动说明
- 1. **三合一全新自适应解析机制**：
-   * **URL 优选**：沿用原有的远程网络加载引擎。支持在 config.json 的 ADDITIONAL_SOURCES 内配置多个远程订阅 URL，获取内容后自动丢入自适应引擎。
-   * **ipv4.txt 优选**：自动扫描同目录下的 ipv4.txt 文件。按行自适应解析 IP:端口#国家 格式，支持去除常见杂质与空白符。
-   * **ipv4.csv 优选（全格式兼容）**：自动扫描同目录下的 ipv4.csv 文件。**不限制固定列名顺序**。利用 Python 内置的 csv.Sniffer 自动判定分隔符，采用模糊匹配机制对表头进行探测（如“IP地址/ip/addr”、“端口/port/Port”、“国家/country/cc/描述”等均能精准提取）。如果 CSV 中缺少端口或国家，将自动赋予默认值（如 443）或通过可用性检测 API 异步补全。
- 2. **全局节点智能去重**：合并三个渠道获取到的所有节点，提取 IP:PORT 作为唯一键进行去重，防止相同节点在多渠道出现导致重复测试。
- 3. **完全无缝继承**：保留了你代码里所有的全局变量命名、日志双向分流 (_Tee)、国家代码提取 (extract_country_code)、各环节测速重试逻辑，确保开箱即用。
-### 完整程序代码 (main.py)
-```python
 #!/usr/bin/env python3
 """
 Cloudflare IP 优选工具 (TCP筛选 + IP可用性二次筛选 + curl带宽测速 + WxPusher通知)
 依赖：requests, curl (系统自带)
 配置文件：同目录下的 config.json（请根据需要修改参数）
 结果保存到 ip.txt，并自动推送到 GitHub，同时批量更新到 Cloudflare DNS
-支持 Windows / Linux
-优化：支持加载远程 URL、本地 ipv4.txt、本地 ipv4.csv 各种格式自适应解析优选
+支持 Windows / Linux / Termux
+
+【新增】终端交互式菜单：支持手动选择 URL优选、本地TXT、本地CSV 模式
 """
 
 import requests
@@ -605,7 +596,6 @@ def parse_csv_adaptive(file_path):
         return nodes
 
     try:
-        # 检测 CSV 的编码与分隔符特征
         with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
             sample = f.read(2048)
             f.seek(0)
@@ -622,11 +612,9 @@ def parse_csv_adaptive(file_path):
         if not rows:
             return nodes
 
-        # 探测列索引
         header = [str(cell).strip().lower() for cell in rows[0]]
         ip_idx, port_idx, country_idx = -1, -1, -1
 
-        # 核心探测映射词
         ip_keywords = ['ip', 'addr', 'host', '地址', '节点']
         port_keywords = ['port', '端口']
         country_keywords = ['country', 'cc', '国家', '地区', '位置', '描述', '标签', 'label']
@@ -639,20 +627,17 @@ def parse_csv_adaptive(file_path):
             elif any(k in col for k in country_keywords) and country_idx == -1:
                 country_idx = i
 
-        # 如果连表头都完全没有，降级使用前三列暴力猜测
         if ip_idx == -1:
             ip_idx = 0
             if len(header) > 1: port_idx = 1
             if len(header) > 2: country_idx = 2
 
         pending_ips = []
-        # 开始逐行提纯
         for row in rows[1:]:
             if not row or len(row) <= ip_idx:
                 continue
             
             ip = str(row[ip_idx]).strip()
-            # 清理可能混合在 IP 字段里的端口号
             if ':' in ip:
                 ip_parts = ip.split(':')
                 ip = ip_parts[0].strip()
@@ -660,7 +645,6 @@ def parse_csv_adaptive(file_path):
             else:
                 port = str(row[port_idx]).strip() if (port_idx != -1 and len(row) > port_idx) else "443"
 
-            # 过滤非 IPv4 格式合法行
             if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
                 continue
             if not port.isdigit():
@@ -674,7 +658,6 @@ def parse_csv_adaptive(file_path):
             else:
                 pending_ips.append(f"{ip}:{port}")
 
-        # 如果有国家代码缺失的，集中丢进备用检测 API 批量查询
         if pending_ips:
             print(f"[CSV解析] 有 {len(pending_ips)} 个节点未提取到有效国家代码，启动 API 异步补全...")
             resolved = _resolve_countries_batch(pending_ips)
@@ -682,7 +665,7 @@ def parse_csv_adaptive(file_path):
                 if code:
                     nodes.append(f"{ipport}#{code}")
                 else:
-                    nodes.append(f"{ipport}#US") # 最终托底兜底机制
+                    nodes.append(f"{ipport}#US")
 
     except Exception as e:
         print(f"解析本地 CSV 文件异常: {e}")
@@ -1208,6 +1191,50 @@ def write_ip_txt(final_nodes, output_file,
             for line in footer_lines:
                 f.write(line + "\n")
 
+def show_interactive_menu():
+    """在终端渲染出漂亮的交互式选择菜单，支持单选或组合多选模式"""
+    print("\n" + "="*45)
+    print("      Cloudflare IP 优选工具 - 数据源选择")
+    print("="*45)
+    print(" 1. 模式一：仅加载 远程 URL 订阅优选")
+    print(" 2. 模式二：仅加载 本地 ipv4.txt 优选")
+    print(" 3. 模式三：仅加载 本地 ipv4.csv 优选")
+    print(" 4. 模式四：全加载 (URL + ipv4.txt + ipv4.csv)")
+    print(" 5. 自定义：手动组合 (例如输入 1,2 或 2,3)")
+    print(" 0. 退出程序")
+    print("="*45)
+    
+    while True:
+        try:
+            choice = input("👉 请输入您的选择并按回车: ").strip()
+            if choice == '0':
+                print("已安全退出程序。")
+                sys.exit(0)
+            elif choice == '1':
+                return [1]
+            elif choice == '2':
+                return [2]
+            elif choice == '3':
+                return [3]
+            elif choice == '4':
+                return [1, 2, 3]
+            elif choice == '5':
+                custom_input = input("👉 请输入要组合的模式编号（用逗号隔开，如 1,2）: ").strip()
+                selected = []
+                for x in custom_input.split(','):
+                    x = x.strip()
+                    if x in ['1', '2', '3']:
+                        selected.append(int(x))
+                if selected:
+                    return list(set(selected))
+                else:
+                    print("⚠️ 输入无效，请重新选择组合。")
+            else:
+                print("⚠️ 输入有误，请输入 0-5 之间的有效指令。")
+        except (KeyboardInterrupt, EOFError):
+            print("\n已强行终止。")
+            sys.exit(0)
+
 def main():
     mode_str = f"全局最优{GLOBAL_TOP_N}个" if USE_GLOBAL_MODE else f"每个国家最优{PER_COUNTRY_TOP_N}个"
     print(f"当前模式：{mode_str}，每个节点测试 {TCP_PROBES} 次 TCP 连接")
@@ -1220,56 +1247,67 @@ def main():
     if FILTER_COUNTRIES_ENABLED:
         print(f"前置白名单过滤：启用，仅保留：{', '.join(ALLOWED_COUNTRIES)}")
 
+    # 调用终端交互菜单获取用户选定的模式列表
+    selected_modes = show_interactive_menu()
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     nodes = []
 
     # ==================== 模式一：URL 优选远程加载 ====================
-    if ADDITIONAL_SOURCES:
-        print("\n[数据源：远程URL] 开始加载远程订阅列表...")
-        for source in ADDITIONAL_SOURCES:
-            if not source.get("enabled", True):
-                continue
-            url = source.get("url")
-            if not url:
-                continue
-            v2_nodes = fetch_additional_source(url)
-            if v2_nodes:
-                nodes.extend(v2_nodes)
+    if 1 in selected_modes:
+        if ADDITIONAL_SOURCES:
+            print("\n[数据源：远程URL] 开始加载远程订阅列表...")
+            for source in ADDITIONAL_SOURCES:
+                if not source.get("enabled", True):
+                    continue
+                url = source.get("url")
+                if not url:
+                    continue
+                v2_nodes = fetch_additional_source(url)
+                if v2_nodes:
+                    nodes.extend(v2_nodes)
+        else:
+            print("\n⚠️ 提示：您选了模式一，但在 config.json 的 ADDITIONAL_SOURCES 中未配置任何远程 URL。")
 
     # ==================== 模式二：本地 ipv4.txt 加载 ====================
-    txt_file_path = os.path.join(script_dir, "ipv4.txt")
-    if os.path.exists(txt_file_path):
-        print("\n[数据源：本地TXT] 检测到 ipv4.txt，开始自适应解析...")
-        try:
-            with open(txt_file_path, "r", encoding="utf-8", errors="ignore") as f:
-                txt_content = f.read()
-                txt_nodes = parse_adaptive(txt_content)
-                print(f"从 ipv4.txt 加载并解析出 {len(txt_nodes)} 个节点。")
-                nodes.extend(txt_nodes)
-        except Exception as e:
-            print(f"读取本地 ipv4.txt 失败: {e}")
+    if 2 in selected_modes:
+        txt_file_path = os.path.join(script_dir, "ipv4.txt")
+        if os.path.exists(txt_file_path):
+            print("\n[数据源：本地TXT] 检测到 ipv4.txt，开始自适应解析...")
+            try:
+                with open(txt_file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    txt_content = f.read()
+                    txt_nodes = parse_adaptive(txt_content)
+                    print(f"从 ipv4.txt 加载并解析出 {len(txt_nodes)} 个节点。")
+                    nodes.extend(txt_nodes)
+            except Exception as e:
+                print(f"读取本地 ipv4.txt 失败: {e}")
+        else:
+            print(f"\n⚠️ 错误：未在目录下找到本地 {txt_file_path} 文件，跳过此加载项。")
 
     # ==================== 模式三：本地 ipv4.csv 加载 ====================
-    csv_file_path = os.path.join(script_dir, "ipv4.csv")
-    if os.path.exists(csv_file_path):
-        print("\n[数据源：本地CSV] 检测到 ipv4.csv，进入全格式自适应识别匹配...")
-        csv_nodes = parse_csv_adaptive(csv_file_path)
-        print(f"从 ipv4.csv 加载并智能过滤出 {len(csv_nodes)} 个可用节点。")
-        nodes.extend(csv_nodes)
+    if 3 in selected_modes:
+        csv_file_path = os.path.join(script_dir, "ipv4.csv")
+        if os.path.exists(csv_file_path):
+            print("\n[数据源：本地CSV] 检测到 ipv4.csv，进入全格式自适应识别匹配...")
+            csv_nodes = parse_csv_adaptive(csv_file_path)
+            print(f"从 ipv4.csv 加载并智能过滤出 {len(csv_nodes)} 个可用节点。")
+            nodes.extend(csv_nodes)
+        else:
+            print(f"\n⚠️ 错误：未在目录下找到本地 {csv_file_path} 文件，跳过此加载项。")
 
     # ==================== 全局节点提纯与去重 ====================
     if nodes:
         seen = set()
         unique_nodes = []
         for n in nodes:
-            # 以 IP:PORT 作为主键防重测试
             key = n.split('#')[0]
             if key not in seen:
                 seen.add(key)
                 unique_nodes.append(n)
         nodes = unique_nodes
     
-    print(f"\n================ 所有数据源合并去重后，总计 {len(nodes)} 个节点进入清洗过滤段 ================")
+    print(f"\n================ 您选定的数据源合并去重后，总计 {len(nodes)} 个节点进入清洗过滤段 ================")
 
     if not nodes:
         print("没有获取到任何有效节点，退出。")
@@ -1469,5 +1507,3 @@ if __name__ == "__main__":
             atexit.register(_close_log)
 
     main()
-
-```
