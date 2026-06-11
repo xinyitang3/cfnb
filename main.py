@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cloudflare IP 优选工具 (TCP筛选 + IP可用性二次筛选 + curl带宽测速 + WxPusher通知)
+Cloudflare IP 优选工具 (TCP筛选 + IP可用性二次筛选 + HTTP检测 + curl带宽测速 + WxPusher通知)
 依赖：requests, curl (系统自带)
 配置文件：同目录下的 config.json（请根据需要修改参数）
 结果保存到 ip.txt，并自动推送到 GitHub，同时批量更新到 Cloudflare DNS
@@ -21,6 +21,10 @@ import json
 import csv
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib3.exceptions import InsecureRequestWarning
+
+# 禁用 SSL 警告 (用于 HTTP 检测)
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 # ==================== 预编译正则 ====================
 NODE_PATTERN = re.compile(r"^(\d+\.\d+\.\d+\.\d+):(\d+)#(.+)$")
@@ -215,6 +219,14 @@ def load_config():
         "AVAILABILITY_CONNECT_TIMEOUT": 3,
         "AVAILABILITY_RETRY_MAX": 2,
         "AVAILABILITY_RETRY_DELAY": 3,
+        "HTTP_TEST_ENABLED": True,
+        "HTTP_TEST_TIMEOUT": 3,
+        "HTTP_TEST_MAX_RETRIES": 2,
+        "HTTP_TEST_RETRY_DELAY": 3,
+        "HTTP_TEST_WORKERS": 32,
+        "HTTP_TEST_METHOD": "HEAD",
+        "HTTP_TEST_MAX_ROUNDS": 2,
+        "HTTP_TEST_ROUND_DELAY": 3,
         "FILTER_IPV6_AVAILABILITY": True,
         "FILTER_BLOCKED_COUNTRIES_ENABLED": True,
         "BLOCKED_COUNTRIES": [
@@ -304,6 +316,14 @@ AVAILABILITY_TIMEOUT = cfg["AVAILABILITY_TIMEOUT"]
 AVAILABILITY_CONNECT_TIMEOUT = cfg["AVAILABILITY_CONNECT_TIMEOUT"]
 AVAILABILITY_RETRY_MAX = cfg["AVAILABILITY_RETRY_MAX"]
 AVAILABILITY_RETRY_DELAY = cfg["AVAILABILITY_RETRY_DELAY"]
+HTTP_TEST_ENABLED = cfg["HTTP_TEST_ENABLED"]
+HTTP_TEST_TIMEOUT = cfg["HTTP_TEST_TIMEOUT"]
+HTTP_TEST_MAX_RETRIES = cfg["HTTP_TEST_MAX_RETRIES"]
+HTTP_TEST_RETRY_DELAY = cfg["HTTP_TEST_RETRY_DELAY"]
+HTTP_TEST_WORKERS = cfg["HTTP_TEST_WORKERS"]
+HTTP_TEST_METHOD = cfg["HTTP_TEST_METHOD"]
+HTTP_TEST_MAX_ROUNDS = cfg["HTTP_TEST_MAX_ROUNDS"]
+HTTP_TEST_ROUND_DELAY = cfg["HTTP_TEST_ROUND_DELAY"]
 FILTER_IPV6_AVAILABILITY = cfg["FILTER_IPV6_AVAILABILITY"]
 FILTER_BLOCKED_COUNTRIES_ENABLED = cfg["FILTER_BLOCKED_COUNTRIES_ENABLED"]
 BLOCKED_COUNTRIES = cfg["BLOCKED_COUNTRIES"]
@@ -755,6 +775,38 @@ def check_availability(node_str):
 
     return (node_str, success, best_stack, best_exit_info)
 
+def check_http_server(node_str, timeout, max_retries, retry_delay, method):
+    m = IP_PORT_PATTERN.match(node_str)
+    if not m:
+        return (node_str, False, "parse_error")
+    ip, port = m.group(1), m.group(2)
+    url = f"http://{ip}:{port}/cdn-cgi/trace"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    }
+
+    for attempt in range(max_retries + 1):
+        try:
+            if method.upper() == "HEAD":
+                resp = requests.head(url, timeout=timeout, verify=False, allow_redirects=False, headers=headers)
+            else:
+                resp = requests.get(url, timeout=timeout, verify=False, allow_redirects=False, headers=headers)
+            if resp.status_code != 400:
+                return (node_str, False, f"status_{resp.status_code}")
+            server = resp.headers.get("server", "")
+            if server.lower().startswith("cloudflare"):
+                return (node_str, True, server)
+            else:
+                return (node_str, False, server)
+        except requests.exceptions.Timeout:
+            if attempt < max_retries:
+                time.sleep(retry_delay)
+                continue
+            else:
+                return (node_str, False, "timeout")
+        except Exception:
+            return (node_str, False, "connection_error")
+
 def availability_filter_candidates(candidates):
     if not TEST_AVAILABILITY or not candidates:
         return candidates, {}, {}
@@ -806,6 +858,59 @@ def availability_filter_with_retry(candidates):
         summary="可用性检测全部失败"
     )
     return candidates, {}, {}
+
+def http_server_filter(candidates, config):
+    """并发 HTTP 检测，支持整体失败重试，全部失败时降级并通知"""
+    if not config.get("HTTP_TEST_ENABLED", False) or not candidates:
+        return candidates
+
+    timeout = HTTP_TEST_TIMEOUT
+    max_retries = HTTP_TEST_MAX_RETRIES
+    retry_delay = HTTP_TEST_RETRY_DELAY
+    workers = HTTP_TEST_WORKERS
+    method = HTTP_TEST_METHOD
+    max_rounds = HTTP_TEST_MAX_ROUNDS
+    round_delay = HTTP_TEST_ROUND_DELAY
+
+    for round_num in range(1, max_rounds + 1):
+        print(f"\n[HTTP检测] 第 {round_num} 轮检测...")
+        print(f"\n对 {len(candidates)} 个候选节点进行 HTTP 二次筛选...")
+
+        passed = []
+        total = len(candidates)
+        completed = 0
+        last_print = time.time()
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_map = {
+                executor.submit(check_http_server, node, timeout, max_retries, retry_delay, method): node
+                for node in candidates
+            }
+            for future in as_completed(future_map):
+                node_str, valid, server = future.result()
+                completed += 1
+                if valid:
+                    passed.append(node_str)
+                now = time.time()
+                if now - last_print >= PROGRESS_PRINT_INTERVAL or completed == total:
+                    print(f"\r[HTTP检测] 进度：{completed}/{total} ({(completed/total)*100:.1f}%) 通过数量：{len(passed)}", end="", flush=True)
+                    last_print = now
+
+        print()
+        if passed:
+            print(f"HTTP检测通过 {len(passed)} 个节点")
+            return passed
+        elif round_num < max_rounds:
+            print(f"本轮 HTTP 检测通过率为 0%，等待 {round_delay} 秒后重试...")
+            time.sleep(round_delay)
+
+    # 全部轮次失败，降级
+    send_wxpusher_notification(
+        content=f"HTTP检测经 {max_rounds} 轮重试后仍无节点通过，已降级使用过滤前列表。",
+        summary="HTTP检测全部失败"
+    )
+    print(f"HTTP检测经 {max_rounds} 轮重试后仍无节点通过，降级使用过滤前候选列表。")
+    return candidates
 
 def measure_bandwidth_curl(node_str):
     m = IP_PORT_PATTERN.match(node_str)
@@ -1240,6 +1345,7 @@ def main():
     print(f"当前模式：{mode_str}，每个节点测试 {TCP_PROBES} 次 TCP 连接")
     print(f"最低成功率要求：{MIN_SUCCESS_RATE*100:.0f}%")
     print(f"IP 可用性二次筛选：{'启用' if TEST_AVAILABILITY else '禁用'}（仅对候选节点）")
+    print(f"HTTP检测：{'启用' if HTTP_TEST_ENABLED else '禁用'}（仅对候选节点）")
     print(f"IPv6 客户端 IP 过滤（仅作用于DNS更新环节）：{'启用' if FILTER_IPV6_AVAILABILITY else '禁用'}")
     print(f"DNS黑名单过滤：{'启用' if FILTER_BLOCKED_COUNTRIES_ENABLED else '禁用'}，黑名单国家：{', '.join(BLOCKED_COUNTRIES)}")
     print(f"IP 风险等级过滤：{'启用' if DNS_IP_RISK_FILTER_ENABLED else '禁用'}（最高允许：{DNS_IP_RISK_MAX_LEVEL}）")
@@ -1399,11 +1505,12 @@ def main():
         sys.exit(0)
 
     candidates_after_availability, avail_ip_info, avail_exit_details = availability_filter_with_retry(candidates)
+    candidates_after_http = http_server_filter(candidates_after_availability, cfg)
 
     bw_results = []
     for attempt in range(1, BANDWIDTH_RETRY_MAX + 1):
         print(f"\n[带宽测速] 第 {attempt} 轮测试...")
-        bw_results = bandwidth_filter(candidates_after_availability)
+        bw_results = bandwidth_filter(candidates_after_http)
         if bw_results:
             break
         if attempt < BANDWIDTH_RETRY_MAX:
