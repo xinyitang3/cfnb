@@ -31,7 +31,7 @@
     "FILTER_COUNTRIES_ENABLED": true,
     "_comment_FILTER_COUNTRIES_ENABLED": "前置白名单开关（true=仅保留下方 ALLOWED_COUNTRIES 中的国家，其余在 TCP 测试前剔除）",
 
-    "ALLOWED_COUNTRIES": ["TH"],
+    "ALLOWED_COUNTRIES": ["US"],
     "_comment_ALLOWED_COUNTRIES": "前置白名单列表（仅在 FILTER_COUNTRIES_ENABLED=true 时生效）",
 
     "PRE_FILTER_BLOCKED_ENABLED": true,
