@@ -219,14 +219,18 @@ def load_config():
         "AVAILABILITY_CONNECT_TIMEOUT": 3,
         "AVAILABILITY_RETRY_MAX": 2,
         "AVAILABILITY_RETRY_DELAY": 3,
+        "AVAILABILITY_INNER_RETRY_ENABLED": True,
+        "AVAILABILITY_INNER_RETRY_MAX": 2,
+        "AVAILABILITY_INNER_RETRY_DELAY": 3,
         "HTTP_TEST_ENABLED": True,
         "HTTP_TEST_TIMEOUT": 3,
-        "HTTP_TEST_MAX_RETRIES": 2,
-        "HTTP_TEST_RETRY_DELAY": 3,
-        "HTTP_TEST_WORKERS": 32,
-        "HTTP_TEST_METHOD": "HEAD",
+        "HTTP_TEST_CONNECT_TIMEOUT": 3,
         "HTTP_TEST_MAX_ROUNDS": 2,
         "HTTP_TEST_ROUND_DELAY": 3,
+        "HTTP_TEST_INNER_RETRY_ENABLED": True,
+        "HTTP_TEST_MAX_RETRIES": 2,
+        "HTTP_TEST_RETRY_DELAY": 3,
+        "HTTP_TEST_METHOD": "HEAD",
         "FILTER_IPV6_AVAILABILITY": True,
         "FILTER_BLOCKED_COUNTRIES_ENABLED": True,
         "BLOCKED_COUNTRIES": [
@@ -248,6 +252,7 @@ def load_config():
         "AVAILABILITY_WORKERS": 32,
         "FALLBACK_WORKERS": 32,
         "BANDWIDTH_WORKERS": 10,
+        "HTTP_TEST_WORKERS": 32,
         "DNS_UPDATE_MAX_RETRIES": 3,
         "DNS_UPDATE_RETRY_DELAY": 3,
         "GITHUB_SYNC_MAX_RETRIES": 3,
@@ -316,14 +321,18 @@ AVAILABILITY_TIMEOUT = cfg["AVAILABILITY_TIMEOUT"]
 AVAILABILITY_CONNECT_TIMEOUT = cfg["AVAILABILITY_CONNECT_TIMEOUT"]
 AVAILABILITY_RETRY_MAX = cfg["AVAILABILITY_RETRY_MAX"]
 AVAILABILITY_RETRY_DELAY = cfg["AVAILABILITY_RETRY_DELAY"]
+AVAILABILITY_INNER_RETRY_ENABLED = cfg["AVAILABILITY_INNER_RETRY_ENABLED"]
+AVAILABILITY_INNER_RETRY_MAX = cfg["AVAILABILITY_INNER_RETRY_MAX"]
+AVAILABILITY_INNER_RETRY_DELAY = cfg["AVAILABILITY_INNER_RETRY_DELAY"]
 HTTP_TEST_ENABLED = cfg["HTTP_TEST_ENABLED"]
 HTTP_TEST_TIMEOUT = cfg["HTTP_TEST_TIMEOUT"]
-HTTP_TEST_MAX_RETRIES = cfg["HTTP_TEST_MAX_RETRIES"]
-HTTP_TEST_RETRY_DELAY = cfg["HTTP_TEST_RETRY_DELAY"]
-HTTP_TEST_WORKERS = cfg["HTTP_TEST_WORKERS"]
-HTTP_TEST_METHOD = cfg["HTTP_TEST_METHOD"]
+HTTP_TEST_CONNECT_TIMEOUT = cfg["HTTP_TEST_CONNECT_TIMEOUT"]
 HTTP_TEST_MAX_ROUNDS = cfg["HTTP_TEST_MAX_ROUNDS"]
 HTTP_TEST_ROUND_DELAY = cfg["HTTP_TEST_ROUND_DELAY"]
+HTTP_TEST_INNER_RETRY_ENABLED = cfg["HTTP_TEST_INNER_RETRY_ENABLED"]
+HTTP_TEST_MAX_RETRIES = cfg["HTTP_TEST_MAX_RETRIES"]
+HTTP_TEST_RETRY_DELAY = cfg["HTTP_TEST_RETRY_DELAY"]
+HTTP_TEST_METHOD = cfg["HTTP_TEST_METHOD"]
 FILTER_IPV6_AVAILABILITY = cfg["FILTER_IPV6_AVAILABILITY"]
 FILTER_BLOCKED_COUNTRIES_ENABLED = cfg["FILTER_BLOCKED_COUNTRIES_ENABLED"]
 BLOCKED_COUNTRIES = cfg["BLOCKED_COUNTRIES"]
@@ -341,6 +350,7 @@ MAX_WORKERS = cfg["MAX_WORKERS"]
 AVAILABILITY_WORKERS = cfg["AVAILABILITY_WORKERS"]
 FALLBACK_WORKERS = cfg["FALLBACK_WORKERS"]
 BANDWIDTH_WORKERS = cfg["BANDWIDTH_WORKERS"]
+HTTP_TEST_WORKERS = cfg["HTTP_TEST_WORKERS"]
 DNS_UPDATE_MAX_RETRIES = cfg["DNS_UPDATE_MAX_RETRIES"]
 DNS_UPDATE_RETRY_DELAY = cfg["DNS_UPDATE_RETRY_DELAY"]
 GITHUB_SYNC_MAX_RETRIES = cfg["GITHUB_SYNC_MAX_RETRIES"]
@@ -757,25 +767,37 @@ def check_availability(node_str):
     best_exit_info = {}
     success = False
 
-    try:
-        resp = requests.get(
-            AVAILABILITY_CHECK_API,
-            params={"proxyip": proxyip},
-            timeout=(AVAILABILITY_CONNECT_TIMEOUT, AVAILABILITY_TIMEOUT)
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("success") is True:
-                success = True
-                best_stack = data.get("inferred_stack", "unknown")
-                probe = data.get("probe_results", {}).get("ipv6") or data.get("probe_results", {}).get("ipv4") or {}
-                best_exit_info = probe.get("exit", {})
-    except Exception:
-        pass
+    # 决定内部重试参数
+    if AVAILABILITY_INNER_RETRY_ENABLED:
+        max_attempts = AVAILABILITY_INNER_RETRY_MAX + 1
+        retry_delay = AVAILABILITY_INNER_RETRY_DELAY
+    else:
+        max_attempts = 1
+        retry_delay = 0
+
+    for attempt in range(max_attempts):
+        try:
+            resp = requests.get(
+                AVAILABILITY_CHECK_API,
+                params={"proxyip": proxyip},
+                timeout=(AVAILABILITY_CONNECT_TIMEOUT, AVAILABILITY_TIMEOUT)
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success") is True:
+                    success = True
+                    best_stack = data.get("inferred_stack", "unknown")
+                    probe = data.get("probe_results", {}).get("ipv6") or data.get("probe_results", {}).get("ipv4") or {}
+                    best_exit_info = probe.get("exit", {})
+                    break
+        except Exception:
+            pass
+        if attempt < max_attempts - 1 and retry_delay > 0:
+            time.sleep(retry_delay)
 
     return (node_str, success, best_stack, best_exit_info)
 
-def check_http_server(node_str, timeout, max_retries, retry_delay, method):
+def check_http_server(node_str, timeout, max_retries, retry_delay, method, connect_timeout, inner_retry_enabled):
     m = IP_PORT_PATTERN.match(node_str)
     if not m:
         return (node_str, False, "parse_error")
@@ -785,12 +807,18 @@ def check_http_server(node_str, timeout, max_retries, retry_delay, method):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     }
 
-    for attempt in range(max_retries + 1):
+    if inner_retry_enabled:
+        max_attempts = max_retries + 1
+    else:
+        max_attempts = 1
+        retry_delay = 0
+
+    for attempt in range(max_attempts):
         try:
             if method.upper() == "HEAD":
-                resp = requests.head(url, timeout=timeout, verify=False, allow_redirects=False, headers=headers)
+                resp = requests.head(url, timeout=(connect_timeout, timeout), verify=False, allow_redirects=False, headers=headers)
             else:
-                resp = requests.get(url, timeout=timeout, verify=False, allow_redirects=False, headers=headers)
+                resp = requests.get(url, timeout=(connect_timeout, timeout), verify=False, allow_redirects=False, headers=headers)
             if resp.status_code != 400:
                 return (node_str, False, f"status_{resp.status_code}")
             server = resp.headers.get("server", "")
@@ -799,7 +827,7 @@ def check_http_server(node_str, timeout, max_retries, retry_delay, method):
             else:
                 return (node_str, False, server)
         except requests.exceptions.Timeout:
-            if attempt < max_retries:
+            if attempt < max_attempts - 1:
                 time.sleep(retry_delay)
                 continue
             else:
@@ -865,8 +893,10 @@ def http_server_filter(candidates, config):
         return candidates
 
     timeout = HTTP_TEST_TIMEOUT
+    connect_timeout = HTTP_TEST_CONNECT_TIMEOUT
     max_retries = HTTP_TEST_MAX_RETRIES
     retry_delay = HTTP_TEST_RETRY_DELAY
+    inner_retry_enabled = HTTP_TEST_INNER_RETRY_ENABLED
     workers = HTTP_TEST_WORKERS
     method = HTTP_TEST_METHOD
     max_rounds = HTTP_TEST_MAX_ROUNDS
@@ -883,7 +913,7 @@ def http_server_filter(candidates, config):
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_map = {
-                executor.submit(check_http_server, node, timeout, max_retries, retry_delay, method): node
+                executor.submit(check_http_server, node, timeout, max_retries, retry_delay, method, connect_timeout, inner_retry_enabled): node
                 for node in candidates
             }
             for future in as_completed(future_map):

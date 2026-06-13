@@ -129,11 +129,32 @@
     "AVAILABILITY_RETRY_DELAY": 3,
     "_comment_AVAILABILITY_RETRY_DELAY": "可用性检测重试间隔（秒）",
 
+    "AVAILABILITY_INNER_RETRY_ENABLED": true,
+    "_comment_AVAILABILITY_INNER_RETRY_ENABLED": "可用性检测是否启用单节点内部重试",
+
+    "AVAILABILITY_INNER_RETRY_MAX": 2,
+    "_comment_AVAILABILITY_INNER_RETRY_MAX": "可用性检测单节点内部最大重试次数",
+
+    "AVAILABILITY_INNER_RETRY_DELAY": 3,
+    "_comment_AVAILABILITY_INNER_RETRY_DELAY": "可用性检测单节点内部重试间隔（秒）",
+
     "HTTP_TEST_ENABLED": true,
     "_comment_HTTP_TEST_ENABLED": "是否在可用性测试后开启 HTTP检测（过滤 HTTP 响应头非Cloudflare 的节点）",
 
     "HTTP_TEST_TIMEOUT": 3,
-    "_comment_HTTP_TEST_TIMEOUT": "单次 HTTP 请求超时（秒）",
+    "_comment_HTTP_TEST_TIMEOUT": "单次 HTTP 请求读取超时（秒）",
+
+    "HTTP_TEST_CONNECT_TIMEOUT": 3,
+    "_comment_HTTP_TEST_CONNECT_TIMEOUT": "HTTP 检测的连接超时（秒）",
+
+    "HTTP_TEST_MAX_ROUNDS": 2,
+    "_comment_HTTP_TEST_MAX_ROUNDS": "HTTP 检测整体失败（通过率为0）时的最大重试轮数",
+
+    "HTTP_TEST_ROUND_DELAY": 3,
+    "_comment_HTTP_TEST_ROUND_DELAY": "HTTP 检测整体重试间隔（秒）",
+
+    "HTTP_TEST_INNER_RETRY_ENABLED": true,
+    "_comment_HTTP_TEST_INNER_RETRY_ENABLED": "HTTP 检测是否启用单节点内部重试",
 
     "HTTP_TEST_MAX_RETRIES": 2,
     "_comment_HTTP_TEST_MAX_RETRIES": "HTTP 请求超时后的最大重试次数",
@@ -141,17 +162,8 @@
     "HTTP_TEST_RETRY_DELAY": 3,
     "_comment_HTTP_TEST_RETRY_DELAY": "HTTP 请求重试间隔（秒）",
 
-    "HTTP_TEST_WORKERS": 32,
-    "_comment_HTTP_TEST_WORKERS": "HTTP 检测的并发线程数",
-
     "HTTP_TEST_METHOD": "HEAD",
     "_comment_HTTP_TEST_METHOD": "HTTP 请求方法（GET 或 HEAD，推荐 HEAD 以减少流量和暴露风险）",
-
-    "HTTP_TEST_MAX_ROUNDS": 2,
-    "_comment_HTTP_TEST_MAX_ROUNDS": "HTTP 检测整体失败（通过率为0）时的最大重试轮数",
-
-    "HTTP_TEST_ROUND_DELAY": 3,
-    "_comment_HTTP_TEST_ROUND_DELAY": "HTTP 检测整体重试间隔（秒）",
 
     "FILTER_IPV6_AVAILABILITY": true,
     "_comment_FILTER_IPV6_AVAILABILITY": "【仅DNS】是否过滤落地为 IPv6 的节点",
@@ -182,7 +194,7 @@
     "_comment_BANDWIDTH_TIMEOUT": "单个节点带宽测速超时（秒）",
 
     "BANDWIDTH_RETRY_MAX": 2,
-    "_comment_BANDWIDTH_RETRY_MAX": "带宽测速整体失败（结果为空）时的最大重试轮数（例如设为2，则总共最多执行2轮）",
+    "_comment_BANDWIDTH_RETRY_MAX": "带宽测速整体失败（结果为空）时的最大重试轮数",
 
     "BANDWIDTH_RETRY_DELAY": 3,
     "_comment_BANDWIDTH_RETRY_DELAY": "带宽测速重试间隔（秒）",
@@ -204,6 +216,9 @@
 
     "FALLBACK_WORKERS": 32,
     "_comment_FALLBACK_WORKERS": "备用国家查询的并发线程数（当标签无法识别时自动调用可用性 API 查询）",
+
+    "HTTP_TEST_WORKERS": 32,
+    "_comment_HTTP_TEST_WORKERS": "HTTP 检测的并发线程数",
 
     "BANDWIDTH_WORKERS": 10,
     "_comment_BANDWIDTH_WORKERS": "带宽测速的并发线程数",

@@ -362,6 +362,9 @@ python3 main.py
 | `AVAILABILITY_CONNECT_TIMEOUT` | `int` | `3` | 可用性 API 连接超时（秒） |
 | `AVAILABILITY_RETRY_MAX` | `int` | `2` | 可用性检测最大重试轮数 |
 | `AVAILABILITY_RETRY_DELAY` | `int` | `3` | 可用性检测重试间隔（秒） |
+| `AVAILABILITY_INNER_RETRY_ENABLED` | `boolean` | `true` | 可用性检测是否启用单节点内部重试 |
+| `AVAILABILITY_INNER_RETRY_MAX` | `int` | `2` | 可用性检测单节点内部最大重试次数 |
+| `AVAILABILITY_INNER_RETRY_DELAY` | `int` | `3` | 可用性检测单节点内部重试间隔（秒） |
 | `FILTER_IPV6_AVAILABILITY` | `boolean` | `true` | **仅作用于 DNS**：是否过滤落地仅 IPv6 的节点（`ipv6_only`） |
 
 > 💡 IPv6 过滤逻辑：通过 API 返回的 `inferred_stack` 判断，仅淘汰 `ipv6_only` 节点，保留 `ipv4_only` 和 `dual_stack` 节点。
@@ -371,13 +374,14 @@ python3 main.py
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `HTTP_TEST_ENABLED` | `boolean` | `true` | 是否启用 HTTP检测（过滤 HTTP 响应头非Cloudflare 的节点） |
-| `HTTP_TEST_TIMEOUT` | `int` | `3` | 单次 HTTP 请求超时（秒） |
+| `HTTP_TEST_TIMEOUT` | `int` | `3` | 单次 HTTP 请求读取超时（秒） |
+| `HTTP_TEST_CONNECT_TIMEOUT` | `int` | `3` | HTTP 检测的连接超时（秒），与读取超时分离 |
+| `HTTP_TEST_INNER_RETRY_ENABLED` | `boolean` | `true` | HTTP 检测是否启用单节点内部重试 |
 | `HTTP_TEST_MAX_RETRIES` | `int` | `2` | 单节点 HTTP 请求超时重试次数 |
 | `HTTP_TEST_RETRY_DELAY` | `int` | `3` | HTTP 请求重试间隔（秒） |
-| `HTTP_TEST_WORKERS` | `int` | `32` | HTTP 检测并发线程数 |
-| `HTTP_TEST_METHOD` | `string` | `"HEAD"` | 请求方法（`GET` 或 `HEAD`，推荐 `HEAD` 更轻量且隐蔽） |
 | `HTTP_TEST_MAX_ROUNDS` | `int` | `2` | 整体失败（通过率为0）时的最大重试轮数 |
 | `HTTP_TEST_ROUND_DELAY` | `int` | `3` | 整体重试间隔（秒） |
+| `HTTP_TEST_METHOD` | `string` | `"HEAD"` | 请求方法（`GET` 或 `HEAD`） |
 
 > 💡 HTTP 检测在可用性检测之后、带宽测速之前执行，仅淘汰非 `Code: 400` 和 `Server: cloudflare` 的节点，其余均视为可用。
 
@@ -400,6 +404,7 @@ python3 main.py
 | `MAX_WORKERS` | `int` | `200` | TCP 并发测试最大线程数 |
 | `AVAILABILITY_WORKERS` | `int` | `32` | 可用性检测并发数 |
 | `FALLBACK_WORKERS` | `int` | `32` | 备用国家查询的并发线程数（当标签无法识别时自动调用可用性API查询国家） |
+| `HTTP_TEST_WORKERS` | `int` | `32` | HTTP 检测并发线程数 |
 | `BANDWIDTH_WORKERS` | `int` | `10` | 带宽测速并发数 |
 
 **重试策略配置**
