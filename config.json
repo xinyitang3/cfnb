@@ -10,7 +10,7 @@
     "PER_COUNTRY_TOP_N": 30,
     "_comment_PER_COUNTRY_TOP_N": "分国家模式下每个国家保留的节点数量",
 
-    "BANDWIDTH_CANDIDATES": 100,
+    "BANDWIDTH_CANDIDATES": 200,
     "_comment_BANDWIDTH_CANDIDATES": "进入带宽测速的候选节点数（从TCP通过者中选取前N个）",
 
     "TCP_PROBES": 3,
