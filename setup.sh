@@ -130,19 +130,63 @@ fi
 
 echo ""
 
-# ---------- 2. 安装 Python 依赖 requests（智能跳过） ----------
-echo -e "${GREEN}[2/4] 检查 Python 包 requests...${NC}"
+# ---------- 2. 安装 Python 依赖（requests, aiohttp, brotlicffi）----------
+echo -e "${GREEN}[2/4] 检查并安装 Python 依赖...${NC}"
+
+# 先升级 pip，保证安装过程顺利
+python3 -m pip install --upgrade pip --quiet
+
+# 检查并安装 requests
 if python3 -m pip show requests &> /dev/null; then
-    echo -e "✅ requests 已安装，跳过。"
+    echo -e "  ✅ requests 已安装"
 else
-    echo -e "${YELLOW}正在安装 requests...${NC}"
-    python3 -m pip install --upgrade pip --quiet
+    echo -e "${YELLOW}  安装 requests...${NC}"
     python3 -m pip install requests --quiet
     if python3 -m pip show requests &> /dev/null; then
-        echo -e "${GREEN}✅ requests 库安装完成。${NC}"
+        echo -e "  ✅ requests 安装完成"
     else
-        echo -e "${RED}❌ requests 安装失败，请手动执行: pip3 install requests${NC}"
+        echo -e "${RED}  ❌ requests 安装失败，请手动执行: pip3 install requests${NC}"
         exit 1
+    fi
+fi
+
+# 检查并安装 aiohttp
+if python3 -m pip show aiohttp &> /dev/null; then
+    echo -e "  ✅ aiohttp 已安装"
+else
+    echo -e "${YELLOW}  安装 aiohttp...${NC}"
+    python3 -m pip install aiohttp --quiet
+    if python3 -m pip show aiohttp &> /dev/null; then
+        echo -e "  ✅ aiohttp 安装完成"
+    else
+        echo -e "${RED}  ❌ aiohttp 安装失败，请手动执行: pip3 install aiohttp${NC}"
+        exit 1
+    fi
+fi
+
+# 检查并安装 brotli 解压支持（优先 brotlicffi）
+brotli_ok=false
+if python3 -m pip show brotlicffi &> /dev/null; then
+    echo -e "  ✅ brotlicffi 已安装"
+    brotli_ok=true
+elif python3 -m pip show brotli &> /dev/null; then
+    echo -e "  ✅ brotli 已安装"
+    brotli_ok=true
+fi
+
+if [ "$brotli_ok" = false ]; then
+    echo -e "${YELLOW}  安装 brotlicffi（解压支持）...${NC}"
+    if python3 -m pip install brotlicffi --quiet 2>/dev/null; then
+        echo -e "  ✅ brotlicffi 安装完成"
+    else
+        echo -e "${YELLOW}  ⚠️ brotlicffi 安装失败，尝试安装 brotli...${NC}"
+        python3 -m pip install brotli --quiet
+        if python3 -m pip show brotli &> /dev/null; then
+            echo -e "  ✅ brotli 安装完成"
+        else
+            echo -e "${RED}  ❌ brotli 解压库安装失败，请手动执行: pip3 install brotlicffi${NC}"
+            exit 1
+        fi
     fi
 fi
 echo ""
@@ -163,10 +207,9 @@ if [ ! -f "$PYTHON_SCRIPT" ]; then
     exit 1
 fi
 
-# ---------- 4. 配置 cron 定时任务（对齐 Windows 的下个整5分开始 + 每5分钟重复） ----------
+# ---------- 4. 配置 cron 定时任务 ----------
 echo -e "${GREEN}[4/4] 配置定时任务（每${TASK_INTERVAL_MINUTES}分钟运行一次）...${NC}"
 
-# 计算下一个整 5 分钟时刻（用于显示）
 calc_next_aligned() {
     local interval=$1
     local current_min=$(date +%M)
@@ -183,11 +226,9 @@ calc_next_aligned() {
 NEXT_RUN=$(calc_next_aligned $TASK_INTERVAL_MINUTES)
 echo -e "   首次运行将发生在: ${CYAN}$NEXT_RUN${NC}（之后每 ${TASK_INTERVAL_MINUTES} 分钟运行一次）"
 
-# 构建 cron 表达式：分钟字段为 */5（每5分钟）
 CRON_MINUTE_FIELD="*/5"
 PYTHON_PATH=$(which python3)
 
-# 智能检测优先级前缀（对齐 Windows 的高优先级逻辑）
 if [[ $EUID -eq 0 ]]; then
     NICE_PREFIX="nice -n -20"
     echo -e "   运行优先级: 高 (nice -n -20)"
@@ -199,11 +240,9 @@ fi
 CRON_CMD="$CRON_MINUTE_FIELD * * * * cd \"$SCRIPT_DIR\" && $NICE_PREFIX \"$PYTHON_PATH\" \"$SCRIPT_DIR/$PYTHON_SCRIPT\" >> \"$SCRIPT_DIR/cron.log\" 2>&1"
 CRON_COMMENT="# Cloudflare IP 优选工具定时任务（每5分钟，整点对齐）"
 
-# 检查是否已存在相同任务（基于脚本路径去重）
 if crontab -l 2>/dev/null | grep -F "$SCRIPT_DIR/$PYTHON_SCRIPT" > /dev/null; then
     echo -e "${YELLOW}⚠️ 定时任务已存在，跳过添加。${NC}"
 else
-    # 添加新任务
     (crontab -l 2>/dev/null || true; echo "$CRON_COMMENT"; echo "$CRON_CMD") | crontab -
     echo -e "${GREEN}✅ 定时任务已添加（每${TASK_INTERVAL_MINUTES}分钟，从下一个整5分钟开始）${NC}"
 fi
@@ -212,13 +251,11 @@ echo -e "   执行命令: $NICE_PREFIX $PYTHON_PATH $SCRIPT_DIR/$PYTHON_SCRIPT"
 echo -e "   日志文件: $SCRIPT_DIR/cron.log"
 echo ""
 
-# ---------- 赋予 git_sync.sh 执行权限（如果存在） ----------
 if [ -f "git_sync.sh" ]; then
     chmod +x git_sync.sh
     echo -e "✅ 已赋予 git_sync.sh 执行权限"
 fi
 
-# ---------- 后续指引 ----------
 echo ""
 echo -e "${CYAN}========================================"
 echo -e " 🎉 部署完成！"
@@ -231,7 +268,6 @@ echo -e "4. 查看定时任务日志: ${CYAN}tail -f cron.log${NC}"
 echo -e "5. 管理定时任务: ${CYAN}crontab -e${NC}"
 echo ""
 
-# 询问是否立即运行
 read -p "是否立即运行一次 main.py 进行测试？(y/N) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then

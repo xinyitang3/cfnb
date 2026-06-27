@@ -10,14 +10,17 @@
     "PER_COUNTRY_TOP_N": 30,
     "_comment_PER_COUNTRY_TOP_N": "分国家模式下每个国家保留的节点数量",
 
-    "BANDWIDTH_CANDIDATES": 200,
+    "BANDWIDTH_CANDIDATES": 150,
     "_comment_BANDWIDTH_CANDIDATES": "进入带宽测速的候选节点数（从TCP通过者中选取前N个）",
 
-    "TCP_PROBES": 3,
+    "TCP_PROBES": 1,
     "_comment_TCP_PROBES": "每个节点测试 TCP 连接的次数",
 
     "MIN_SUCCESS_RATE": 1.0,
     "_comment_MIN_SUCCESS_RATE": "TCP 最低成功率阈值（0.0~1.0），低于此值的节点直接淘汰",
+
+    "TCP_LATENCY_WEIGHT": 0.0,
+    "_comment_TCP_LATENCY_WEIGHT": "TCP延迟在综合排序中的权重（越大越排斥高TCP延迟）",
 
     "TIMEOUT": 2.0,
     "_comment_TIMEOUT": "单次 TCP 连接超时时间（秒）",
@@ -102,6 +105,18 @@
     "FETCH_CONNECT_TIMEOUT": 3,
     "_comment_FETCH_CONNECT_TIMEOUT": "获取节点列表连接超时（秒）",
 
+    "IP_CALIBRATION_ENABLED": false,
+    "_comment_IP_CALIBRATION_ENABLED": "是否启用 IP 地区校准（true=启用，false=禁用）",
+
+    "IP_CALIBRATION_MIN_INTERVAL": 0.1,
+    "_comment_IP_CALIBRATION_MIN_INTERVAL": "地区校准的最小请求间隔（秒）",
+
+    "IP_CALIBRATION_TOKEN_FILE": "valid_tokens.txt",
+    "_comment_IP_CALIBRATION_TOKEN_FILE": "地区校准的 token 文件名（位于脚本同目录）",
+
+    "IP_CALIBRATION_CACHE_FILE": "ipinfo_cache.txt",
+    "_comment_IP_CALIBRATION_CACHE_FILE": "地区校准的缓存文件名（位于脚本同目录）",
+
     "OUTPUT_FILE": "ip.txt",
     "_comment_OUTPUT_FILE": "最终结果保存的文件名",
 
@@ -110,6 +125,9 @@
 
     "LOG_FILE": "cfnb.log",
     "_comment_LOG_FILE": "运行日志文件名（仅在 ENABLE_LOGGING 为 true 时生效）",
+
+    "FORCE_DIRECT": true,
+    "_comment_FORCE_DIRECT": "是否强制所有网络请求直连（true=清除系统代理，全部直连）",
 
     "TEST_AVAILABILITY": true,
     "_comment_TEST_AVAILABILITY": "是否对候选节点进行可用性二次筛选（API检测）",
@@ -163,7 +181,16 @@
     "_comment_HTTP_TEST_RETRY_DELAY": "HTTP 请求重试间隔（秒）",
 
     "HTTP_TEST_METHOD": "HEAD",
-    "_comment_HTTP_TEST_METHOD": "HTTP 请求方法（GET 或 HEAD，推荐 HEAD 以减少流量和暴露风险）",
+    "_comment_HTTP_TEST_METHOD": "HTTP 请求方法（GET 或 HEAD）",
+
+    "HTTP_LATENCY_WEIGHT": 3.0,
+    "_comment_HTTP_LATENCY_WEIGHT": "HTTP延迟在综合排序中的权重（越大越排斥高HTTP延迟）",
+
+    "JITTER_WEIGHT": 3.0,
+    "_comment_JITTER_WEIGHT": "HTTP延迟抖动（标准差）在综合排序中的权重（越大越排斥延迟波动大的节点）",
+
+    "HTTP_JITTER_SAMPLES": 3,
+    "_comment_HTTP_JITTER_SAMPLES": "HTTP延迟抖动测试次数（至少3次，建议3~5次，越大越准但越慢）",
 
     "FILTER_IPV6_AVAILABILITY": true,
     "_comment_FILTER_IPV6_AVAILABILITY": "【仅DNS】是否过滤落地为 IPv6 的节点",
@@ -187,7 +214,7 @@
     "DNS_UPDATE_TARGET_COUNT": 15,
     "_comment_DNS_UPDATE_TARGET_COUNT": "DNS 更新时写入的最大 IP 数量，独立于筛选模式",
 
-    "BANDWIDTH_SIZE_MB": 0.5,
+    "BANDWIDTH_SIZE_MB": 1.0,
     "_comment_BANDWIDTH_SIZE_MB": "带宽测速下载文件大小（MB）",
 
     "BANDWIDTH_TIMEOUT": 3,
@@ -208,7 +235,13 @@
     "BANDWIDTH_CONNECT_TIMEOUT": 3,
     "_comment_BANDWIDTH_CONNECT_TIMEOUT": "curl 测速连接超时（秒）",
 
-    "MAX_WORKERS": 200,
+    "SPEED_WEIGHT": 3.0,
+    "_comment_SPEED_WEIGHT": "带宽在综合排序中的权重（越大越看重带宽）",
+
+    "IP_CALIBRATION_CONCURRENCY": 300,
+    "_comment_IP_CALIBRATION_CONCURRENCY": "地区校准的并发查询数（根据 token 数量调整）",
+
+    "MAX_WORKERS": 300,
     "_comment_MAX_WORKERS": "TCP 并发测试的最大线程数",
 
     "AVAILABILITY_WORKERS": 32,
@@ -220,7 +253,7 @@
     "HTTP_TEST_WORKERS": 32,
     "_comment_HTTP_TEST_WORKERS": "HTTP 检测的并发线程数",
 
-    "BANDWIDTH_WORKERS": 10,
+    "BANDWIDTH_WORKERS": 3,
     "_comment_BANDWIDTH_WORKERS": "带宽测速的并发线程数",
 
     "_comment_retry": "重试策略配置",
@@ -252,6 +285,12 @@
 
     "IP_TXT_SHOW_BANDWIDTH": false,
     "_comment_IP_TXT_SHOW_BANDWIDTH": "ip.txt 中是否附带带宽测速信息（如 5.20 Mbps）",
+
+    "IP_TXT_SHOW_HTTP_LATENCY": false,
+    "_comment_IP_TXT_SHOW_HTTP_LATENCY": "ip.txt 中是否附带 HTTP 延迟信息（如 30.00 ms）",
+
+    "IP_TXT_SHOW_HTTP_JITTER": false,
+    "_comment_IP_TXT_SHOW_HTTP_JITTER": "ip.txt 中是否附带 HTTP 抖动信息（如 2.50 ms）",
 
     "IP_TXT_SHOW_LATENCY": false,
     "_comment_IP_TXT_SHOW_LATENCY": "ip.txt 中是否附带 TCP 延迟信息（如 50.30 ms）"

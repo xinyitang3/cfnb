@@ -1,5 +1,3 @@
----
-
 # Cloudflare IP 优选工具
 
 [![GitHub stars](https://img.shields.io/github/stars/xinyitang3/cfnb?style=social)](https://github.com/xinyitang3/cfnb/stargazers)
@@ -11,7 +9,7 @@
 
 > ⭐ **如果觉得好用，点个 Star 支持一下～**
 
-这是一个全自动的 **Cloudflare CDN 节点优选工具**。它通过 **TCP 延迟筛选** + **IP 可用性二次检测** + **HTTP检测** + **真实带宽测速** 四重机制，从多个公开数据源中聚合节点，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），筛选出当前网络环境下速度最快、可用性最高的 Cloudflare IP，并支持**自动更新至 Cloudflare DNS** 以及**同步至 GitHub 仓库**，同时支持微信实时通知。
+这是一个全自动的 **Cloudflare CDN 节点优选工具**。它通过 **TCP 延迟筛选** + **IP 可用性二次检测** + **HTTP 延迟及抖动检测** + **真实带宽测速** 多重机制，从多个公开数据源中聚合节点，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），筛选出当前网络环境下速度最快、延迟最低、抖动最小的 Cloudflare IP，并支持**自动更新至 Cloudflare DNS** 以及**同步至 GitHub 仓库**，同时支持微信实时通知。
 
 > [!IMPORTANT]
 > **跨平台支持**：本工具同时兼容 **Windows** 和 **Linux** 操作系统。
@@ -39,14 +37,17 @@
 | 🌐 **多模式筛选** | 全局最优 TopN / 分国家最优 TopN |
 | ⚡ **TCP 连接测试** | 并发测延迟，可设成功率阈值 |
 | 🔍 **可用性二次检测** | API 验证代理能力 |
-| 🔍 **HTTP检测** | 探测 HTTP 响应头，过滤非Cloudflare节点，提升代理兼容性 |
+| 🔍 **HTTP 延迟与抖动检测** | 多次探测 HTTP 响应，计算平均延迟与抖动（标准差），过滤非 Cloudflare 节点，提升代理兼容性 |
 | 📶 **真实带宽测速** | curl 下载测速，实测吞吐量 |
+| ⚖️ **综合加权排序** | 同时考虑带宽、TCP 延迟、HTTP 延迟与抖动，四个权重可自由调整，选出综合体验最优的节点 |
 | 🧩 **多源自适应聚合** | 支持多个数据源，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），统一转换为标准格式 |
 | ⚙️ **前置过滤（按序执行）** | TCP 测试前按序：端口过滤 → 黑名单过滤 → 白名单过滤（均可开关） |
 | 🚫 **DNS 黑名单** | DNS 更新时剔除指定国家节点（**仅作用于 DNS 更新环节**） |
 | 🛡️ **IPv6 落地过滤** | 过滤落地仅 IPv6 的节点，保留 IPv4/双栈节点（**仅作用于 DNS 更新环节**） |
 | 🔍 **IP 风险等级过滤** | 仅允许低风险节点，高危自动回退（**仅作用于 DNS 更新环节**） |
-| ☁️ **Cloudflare DNS 更新** | 原子批量替换同名 A 记录 |
+| 🗺️ **IP 地区校准** | 基于 ipinfo.io 异步并发查询，自动校正节点国家代码，结果缓存复用 |
+| 🔒 **强制直连模式** | 可配置开关，一键清除系统代理，确保所有测试流量走直连 |
+| ☁️ **Cloudflare DNS 更新** | 原子批量替换同名 A/TXT 记录 |
 | 📬 **微信实时通知** | 集成 WxPusher，异常/结果推送 |
 | 🔄 **定时自动运行** | Windows 计划任务 / Linux cron，每 5 分钟 |
 | 🚀 **一键部署** | `setup.ps1` / `setup.sh` 自动安装依赖并配置 |
@@ -70,6 +71,7 @@
 | `ip.txt` | 最终优选节点列表（每次运行覆盖） |
 | `update_fork.ps1` | Windows 仓库修复脚本（解决 fork 后冲突/认证） |
 | `update_fork.sh` | Linux 仓库修复脚本（解决 fork 后冲突/认证） |
+| `valid_tokens.txt` | ipinfo.io API Token 列表（每行一个，用于 IP 地区校准） |
 
 ---
 
@@ -80,7 +82,7 @@
   - **Python 3.7+**
   - **Git**
   - **curl**（需在系统 PATH 中可用）
-- **Python 依赖**：`requests` 库
+- **Python 依赖**：`requests`, `aiohttp`, `brotlicffi`
 
 ---
 
@@ -99,7 +101,7 @@
 2. **配置各项令牌（见下一节）**  
    根据需求获取并填写 GitHub Token、Cloudflare API Token 和 WxPusher 凭证。
 
-> 💡 部署脚本会自动安装依赖、创建 `.gitignore` 并配置定时任务（每 5 分钟整点运行）。
+> 💡 部署脚本会自动安装 `requests`、`aiohttp`、`brotlicffi` 三个 Python 依赖、创建 `.gitignore` 并配置定时任务（每 5 分钟整点运行）。
 
 ---
 
@@ -174,7 +176,7 @@ python3 main.py
 2. 安装 [Git](https://git-scm.com/download/win) 和 [curl](https://curl.se/windows/)（curl 需加入 PATH）。
 3. 在项目目录打开命令提示符，安装依赖：
    ```cmd
-   pip install requests
+   pip install requests aiohttp brotlicffi
    ```
 4. （可选）手动创建计划任务：
    - 按 `Win + R`，输入 `taskschd.msc` 打开任务计划程序。
@@ -193,7 +195,7 @@ python3 main.py
    ```
 2. 安装 Python 依赖：
    ```bash
-   pip3 install requests
+   pip3 install requests aiohttp brotlicffi
    ```
 3. 赋予推送脚本执行权限（如果需要）：
    ```bash
@@ -260,18 +262,31 @@ python3 main.py
 | `USE_GLOBAL_MODE` | `boolean` | `true` | `true`=全局优选；`false`=分国家优选 |
 | `GLOBAL_TOP_N` | `int` | `15` | 全局模式保留节点数 |
 | `PER_COUNTRY_TOP_N` | `int` | `1` | 分国家模式每国保留节点数 |
-| `BANDWIDTH_CANDIDATES` | `int` | `90` | 进入测速的候选节点数 |
+| `BANDWIDTH_CANDIDATES` | `int` | `150` | 进入测速的候选节点数 |
 | `DNS_UPDATE_TARGET_COUNT` | `int` | `15` | DNS 更新时写入的最大 IP 数量，独立于筛选模式 |
 
 ### TCP 连接测试参数
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `TCP_PROBES` | `int` | `3` | 每个节点 TCP 测试次数 |
+| `TCP_PROBES` | `int` | `1` | 每个节点 TCP 测试次数 |
 | `MIN_SUCCESS_RATE` | `float` | `1.0` | 最低成功率阈值（0.0~1.0） |
+| `TCP_LATENCY_WEIGHT` | `float` | `0.0` | TCP延迟在综合排序中的权重（越大越排斥高TCP延迟） |
 | `TIMEOUT` | `float` | `2.0` | 单次 TCP 连接超时（秒） |
 | `SOCKET_DEFAULT_TIMEOUT` | `int` | `3` | 全局 Socket 默认超时（秒），防止永久阻塞 |
 | `PROGRESS_PRINT_INTERVAL` | `float` | `1` | 进度打印刷新间隔（秒），避免频繁 I/O |
+
+### 综合排序权重
+
+最终节点的排名由综合得分决定，公式为：  
+**得分 = (SPEED_WEIGHT × 带宽) / (1 + TCP_LATENCY_WEIGHT × TCP延迟 + HTTP_LATENCY_WEIGHT × HTTP延迟 + JITTER_WEIGHT × HTTP抖动)**
+
+| 参数 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `HTTP_LATENCY_WEIGHT` | `float` | `3.0` | HTTP延迟在综合排序中的权重（越大越排斥高HTTP延迟） |
+| `JITTER_WEIGHT` | `float` | `3.0` | HTTP延迟抖动（标准差）在综合排序中的权重（越大越排斥延迟波动大的节点） |
+| `HTTP_JITTER_SAMPLES` | `int` | `3` | HTTP延迟抖动测试次数（至少3次，建议3~5次，越大越准但越慢） |
+| `SPEED_WEIGHT` | `float` | `3.0` | 带宽在综合排序中的权重（越大越看重带宽） |
 
 ### 前置过滤参数（TCP 测试前生效）
 
@@ -287,14 +302,21 @@ python3 main.py
 > 💡 过滤执行顺序：**前置端口过滤 → 前置黑名单 → 前置白名单**。  
 > 所有前置过滤均在 TCP 测试前完成，可大幅减少无效测试。
 
+### 网络直连控制
+
+| 参数 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `FORCE_DIRECT` | `boolean` | `true` | 是否强制所有网络请求直连（`true`=清除系统代理，全部走直连） |
+
 ### DNS 黑名单参数（仅作用于 DNS 更新环节）
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
+| `FILTER_IPV6_AVAILABILITY` | `boolean` | `true` | **仅作用于 DNS**：是否过滤落地仅 IPv6 的节点（`ipv6_only`） |
 | `FILTER_BLOCKED_COUNTRIES_ENABLED` | `boolean` | `true` | DNS 更新时是否启用黑名单过滤 |
 | `BLOCKED_COUNTRIES` | `array` | `BD, BI, BY, CD, CF, CN, CU, DE, ET, HK,`<br>`IR, KP, LY, MO, NG, NL, PK, RU, SD, SO,`<br>`SY, TH, TW, UA, VE, VN, YE, ZW` | DNS 更新时需要剔除的国家代码列表（共 28 个） |
-| DNS_IP_RISK_FILTER_ENABLED | `boolean` | `false` | 是否启用 IP 风险等级过滤 |
-| DNS_IP_RISK_MAX_LEVEL | `string` | `高风险` | 允许的最高风险等级（可选：极度纯净、纯净、轻微风险、高风险、极度危险） |
+| `DNS_IP_RISK_FILTER_ENABLED` | `boolean` | `false` | 是否启用 IP 风险等级过滤 |
+| `DNS_IP_RISK_MAX_LEVEL` | `string` | `高风险` | 允许的最高风险等级（可选：极度纯净、纯净、轻微风险、高风险、极度危险） |
 
 > **说明**：  
 > - 该过滤**仅作用于 Cloudflare DNS 批量更新环节**，不会影响 `ip.txt` 的内容和 GitHub 推送。  
@@ -349,6 +371,19 @@ python3 main.py
 | `ENABLE_LOGGING` | `boolean` | `false` | 是否启用运行日志（每次运行覆盖 LOG_FILE） |
 | `LOG_FILE` | `string` | `"cfnb.log"` | 运行日志文件名（仅在启用日志时生效） |
 
+### IP 地区校准参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `IP_CALIBRATION_ENABLED` | `boolean` | `false` | 是否启用 IP 地区校准（基于 ipinfo.io） |
+| `IP_CALIBRATION_MIN_INTERVAL` | `float` | `0.1` | 请求最小间隔（秒） |
+| `IP_CALIBRATION_TOKEN_FILE` | `string` | `"valid_tokens.txt"` | ipinfo.io Token 文件名 |
+| `IP_CALIBRATION_CACHE_FILE` | `string` | `"ipinfo_cache.txt"` | 校准结果缓存文件名 |
+
+> 💡 校准结果会实时写入缓存文件，程序结束后自动按 IP 地址排序，下次运行可复用。  
+> Token 文件每行一个 ipinfo.io 的 API Token，可在 [ipinfo.io](https://ipinfo.io/) 注册免费获取（每月 5 万次）。  
+> 程序会自动校验 Token 有效性并显示进度，当所有 Token 均触发速率限制时，会通过微信通知。
+
 <details>
 <summary>🔧 高级参数（可用性 /HTTP / 带宽 / 并发 / 重试 / 广告/ 输出）</summary>
 
@@ -365,7 +400,6 @@ python3 main.py
 | `AVAILABILITY_INNER_RETRY_ENABLED` | `boolean` | `true` | 可用性检测是否启用单节点内部重试 |
 | `AVAILABILITY_INNER_RETRY_MAX` | `int` | `2` | 可用性检测单节点内部最大重试次数 |
 | `AVAILABILITY_INNER_RETRY_DELAY` | `int` | `3` | 可用性检测单节点内部重试间隔（秒） |
-| `FILTER_IPV6_AVAILABILITY` | `boolean` | `true` | **仅作用于 DNS**：是否过滤落地仅 IPv6 的节点（`ipv6_only`） |
 
 > 💡 IPv6 过滤逻辑：通过 API 返回的 `inferred_stack` 判断，仅淘汰 `ipv6_only` 节点，保留 `ipv4_only` 和 `dual_stack` 节点。
 
@@ -389,7 +423,7 @@ python3 main.py
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `BANDWIDTH_SIZE_MB` | `float` | `0.5` | 测速下载文件大小（MB） |
+| `BANDWIDTH_SIZE_MB` | `float` | `1.0` | 测速下载文件大小（MB） |
 | `BANDWIDTH_TIMEOUT` | `int` | `3` | 单个节点带宽测速超时（秒） |
 | `BANDWIDTH_RETRY_MAX` | `int` | `2` | 带宽测速整体重试轮数 |
 | `BANDWIDTH_RETRY_DELAY` | `int` | `3` | 带宽测速重试间隔（秒） |
@@ -401,11 +435,12 @@ python3 main.py
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `MAX_WORKERS` | `int` | `200` | TCP 并发测试最大线程数 |
+| `IP_CALIBRATION_CONCURRENCY` | `int` | `300` | 地区校准的异步并发数 |
+| `MAX_WORKERS` | `int` | `300` | TCP 并发测试最大线程数 |
 | `AVAILABILITY_WORKERS` | `int` | `32` | 可用性检测并发数 |
 | `FALLBACK_WORKERS` | `int` | `32` | 备用国家查询的并发线程数（当标签无法识别时自动调用可用性API查询国家） |
 | `HTTP_TEST_WORKERS` | `int` | `32` | HTTP 检测并发线程数 |
-| `BANDWIDTH_WORKERS` | `int` | `10` | 带宽测速并发数 |
+| `BANDWIDTH_WORKERS` | `int` | `3` | 带宽测速并发数 |
 
 **重试策略配置**
 
@@ -433,15 +468,18 @@ python3 main.py
 
 #### ip.txt 输出内容控制
 
-控制最终 `ip.txt` 文件中每行节点后是否附带带宽测速和 TCP 延迟信息，方便直接查看或用于其他工具解析。
+控制最终 `ip.txt` 文件中每行节点后是否附带带宽测速、HTTP 延迟、HTTP 抖动和 TCP 延迟信息，方便直接查看或用于其他工具解析。
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `IP_TXT_SHOW_BANDWIDTH` | `boolean` | `false` | 是否在每行末尾追加带宽测速结果（如 ` 5.20 Mbps`） |
-| `IP_TXT_SHOW_LATENCY` | `boolean` | `false` | 是否在每行末尾追加 TCP 延迟信息（如 ` 50.30 ms`） |
+| `IP_TXT_SHOW_BANDWIDTH` | `boolean` | `false` | 是否附带带宽测速结果（如 ` 5.20 Mbps`） |
+| `IP_TXT_SHOW_HTTP_LATENCY` | `boolean` | `false` | 是否附带 HTTP 延迟信息（如 ` 30.00 ms`） |
+| `IP_TXT_SHOW_HTTP_JITTER` | `boolean` | `false` | 是否附带 HTTP 抖动信息（如 ` 2.50 ms`） |
+| `IP_TXT_SHOW_LATENCY` | `boolean` | `false` | 是否附带 TCP 延迟信息（如 ` 50.30 ms`） |
 
-> 两个开关可以独立或同时开启，输出格式示例：  
-> `104.16.0.1:443#US 5.20 Mbps 50.30 ms`
+> 多个开关可以独立或同时开启，输出格式示例：  
+> `104.16.0.1:443#US 5.20 Mbps 30.00 ms 2.50 ms 50.30 ms`  
+> （对应：速度 HTTP延迟 HTTP抖动 TCP延迟）
 
 </details>
 
@@ -461,7 +499,7 @@ python3 main.py
 > `162.159.x.x:443#HK`
 
 **重要说明**：  
-- `ip.txt` 中保存的是**基于带宽测速排序的结果**，以确保 GitHub 推送的节点列表完整且不丢失任何高速 IP。  
+- `ip.txt` 中保存的是**基于综合加权排序的结果**，综合考虑了带宽、TCP 延迟、HTTP 延迟和抖动，以确保 GitHub 推送的节点列表完整且不丢失任何高速低延迟的 IP。  
 - Cloudflare DNS 批量更新环节会额外应用 `FILTER_IPV6_AVAILABILITY`（过滤落地 IPv6）、`BLOCKED_COUNTRIES`（屏蔽特定国家）、`DNS_IP_RISK_FILTER_ENABLED`（IP 风险等级过滤，可设定最高允许等级，过滤后无节点自动回退到无风险过滤列表）等过滤，仅将符合条件的 IP 写入 DNS 记录。
 
 ---
@@ -728,7 +766,7 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 > 各阶段对应域名见上方“涉及域名”列表。
 
 **涉及域名：**  
-`cm.edu.kg` · `090227.xyz` · `cloudflare.com` · `zjiecode.com` · `pages.dev` · `ipapi.is` · `github.com` · `githubusercontent.com`
+`cm.edu.kg` · `ipinfo.io` · `090227.xyz` · `cloudflare.com` · `zjiecode.com` · `pages.dev` · `ipapi.is` · `github.com` · `githubusercontent.com`
 
 **建议：**  
 1. 检查本机能否直连上述域名 → 能通设 `DIRECT`，不通设 `PROXY`  
@@ -741,7 +779,7 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 <summary>🔌 依赖与安装</summary>
 
 1. **提示 `ModuleNotFoundError: No module named 'requests'`**  
-   请执行 `pip install requests` (Windows) 或 `pip3 install requests` (Linux)。
+   请执行 `pip install requests aiohttp brotlicffi` (Windows) 或 `pip3 install requests aiohttp brotlicffi` (Linux)。
 
 2. **带宽测速被跳过**  
    请确保系统已安装 `curl` 且位于 PATH 环境变量中。
@@ -807,9 +845,26 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 </details>
 
 <details>
+<summary>🗺️ IP 地区校准</summary>
+
+15. **IP 地区校准是做什么的？**  
+    - 程序会通过 ipinfo.io 查询每个节点 IP 的真实国家代码、城市和 ISP，并缓存到 `ipinfo_cache.txt`。
+    - 校准后节点标签只保留国家代码（如 `#HK`），不影响原有筛选逻辑。
+
+16. **校准速度很慢怎么办？**  
+    - 可适当降低 `IP_CALIBRATION_CONCURRENCY`（如 100），或增加 `IP_CALIBRATION_MIN_INTERVAL`（如 0.15）。
+    - 若不需要校准，将 `IP_CALIBRATION_ENABLED` 设为 `false` 即可跳过。
+
+17. **收到"token可能已耗尽"的微信通知？**  
+    - 只有所有 Token 都触发 ipinfo.io 的速率限制（429）时才会发送此通知，单个 Token 被限速会自动切换，不影响查询。
+    - 可在 [ipinfo.io](https://ipinfo.io/) 申请更多免费 Token 放入 `valid_tokens.txt`。
+
+</details>
+
+<details>
 <summary>🔒 隐私与其他</summary>
 
-15. **隐私保护**  
+18. **隐私保护**  
    自动生成的 `.gitignore` 文件会忽略 `config.json`、`git_sync.ps1` 和 `git_sync.sh`，防止敏感信息被提交到公开仓库。
 
 </details>
@@ -820,10 +875,9 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 
 - 节点数据源 & 检测 API：[cmliussss](https://github.com/cmliussss)
 - IP 风险检测 API：[ipapi.is](https://ipapi.is/)
+- IP 地区校准：[ipinfo.io](https://ipinfo.io/)
 - 微信通知服务：[WxPusher](https://wxpusher.zjiecode.com/)
 
 ---
 
 **许可证**：本项目采用 [MIT License](https://opensource.org/licenses/MIT) 开源。
-
----
