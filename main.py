@@ -1443,8 +1443,6 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
             if record_type == "A":
                 dns_content_list.append(pure_ip)
             else:
-                pass
-            else:
                 dns_content_list.append(f"{pure_ip}:{port}")
             dns_node_list.append(node_str)
 
