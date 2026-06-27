@@ -1583,9 +1583,7 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
                 else:
                     final_error = f"Cloudflare DNS 更新失败，已重试 {DNS_UPDATE_MAX_RETRIES} 次，错误：{e}"
                     print(final_error)
-                    send_wxpusher_notification(content=final_error, summary="DNS 更新失败")
-
-    else:   
+                    send_wxpusher_notification(content=final_error, summary="DNS 更新失败")   
     else:
         for attempt in range(1, DNS_UPDATE_MAX_RETRIES + 1):
             print(f"\n[TXT 记录更新] 尝试 {attempt}/{DNS_UPDATE_MAX_RETRIES}...")
