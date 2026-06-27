@@ -4,6 +4,9 @@ Cloudflare IP 优选工具 (TCP筛选 + IP可用性二次筛选 + HTTP检测 + c
 依赖：requests, curl, aiohttp
 配置文件：同目录下的 config.json
 结果保存到 ip.txt，并自动推送到 GitHub，同时批量更新到 Cloudflare DNS
+支持 Windows / Linux / Termux
+
+【新增】终端交互式菜单：支持手动选择 URL优选、本地TXT、本地CSV 模式
 支持 Windows / Linux
 优化：国家过滤前置，减少无效 TCP 测试；重试参数可配置；所有网络请求连接超时分离
 新增：IP 地区校准 + 缓存差异化更新
@@ -21,6 +24,7 @@ import os
 import subprocess
 import shutil
 import json
+import csv
 import asyncio
 import aiohttp
 import ipaddress
@@ -91,7 +95,7 @@ CN_TO_CODE = {
     "波兰": "PL", "葡萄牙": "PT", "波多黎各": "PR", "卡塔尔": "QA",
     "留尼汪": "RE", "罗马尼亚": "RO", "俄罗斯": "RU", "卢旺达": "RW",
     "圣巴泰勒米": "BL", "圣赫勒拿": "SH", "圣基茨和尼维斯": "KN",
-    "圣卢西亚": "LC", "圣马丁": "MF", "圣皮埃尔和密克隆": "PM",
+    "圣护西亚": "LC", "圣马丁": "MF", "圣皮埃尔和密克隆": "PM",
     "圣文森特和格林纳丁斯": "VC", "萨摩亚": "WS", "圣马力诺": "SM",
     "圣多美和普林西比": "ST", "沙特阿拉伯": "SA", "沙特": "SA",
     "塞内加尔": "SN", "塞尔维亚": "RS", "塞舌尔": "SC", "塞拉利昂": "SL",
@@ -112,7 +116,6 @@ CN_TO_CODE = {
     "赞比亚": "ZM", "津巴布韦": "ZW",
 }
 
-# 三位字母国家代码 → 两位字母国家代码（ISO 3166-1 alpha-3 → alpha-2）
 ALPHA3_TO_ALPHA2 = {
     "AFG": "AF", "ALA": "AX", "ALB": "AL", "DZA": "DZ", "ASM": "AS",
     "AND": "AD", "AGO": "AO", "AIA": "AI", "ATA": "AQ", "ATG": "AG",
@@ -166,9 +169,7 @@ ALPHA3_TO_ALPHA2 = {
     "ZMB": "ZM", "ZWE": "ZW",
 }
 
-# 构建两位有效代码集合，用于快速校验
 CODE_SET = set(CN_TO_CODE.values())
-
 
 # ==================== 加载配置文件 ====================
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -502,7 +503,9 @@ def get_ip_risk_level(ip):
 # ==================== 自适应多数据源解析引擎 ====================
 def extract_country_code(label):
     """从任意标签中提取标准两位国家代码（支持两位代码、三位代码映射、中文名、emoji国旗、混合无关文字）"""
-    label = label.strip()
+    if not label:
+        return None
+    label = str(label).strip()
     if not label:
         return None
 
@@ -657,6 +660,90 @@ def parse_adaptive(text):
             pass
 
     return _parse_text_nodes(text)
+
+
+def parse_csv_adaptive(file_path):
+    """自适应解析本地各类型 CSV 表格，通过模糊匹配探测 IP、端口、国家位置"""
+    nodes = []
+    if not os.path.exists(file_path):
+        return nodes
+
+    try:
+        with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
+            sample = f.read(2048)
+            f.seek(0)
+            if not sample.strip():
+                return nodes
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+                reader = csv.reader(f, dialect)
+            except Exception:
+                reader = csv.reader(f)
+
+            rows = list(reader)
+
+        if not rows:
+            return nodes
+
+        header = [str(cell).strip().lower() for cell in rows[0]]
+        ip_idx, port_idx, country_idx = -1, -1, -1
+
+        ip_keywords = ['ip', 'addr', 'host', '地址', '节点']
+        port_keywords = ['port', '端口']
+        country_keywords = ['country', 'cc', '国家', '地区', '位置', '描述', '标签', 'label']
+
+        for i, col in enumerate(header):
+            if any(k in col for k in ip_keywords) and ip_idx == -1:
+                ip_idx = i
+            elif any(k in col for k in port_keywords) and port_idx == -1:
+                port_idx = i
+            elif any(k in col for k in country_keywords) and country_idx == -1:
+                country_idx = i
+
+        if ip_idx == -1:
+            ip_idx = 0
+            if len(header) > 1: port_idx = 1
+            if len(header) > 2: country_idx = 2
+
+        pending_ips = []
+        for row in rows[1:]:
+            if not row or len(row) <= ip_idx:
+                continue
+            
+            ip = str(row[ip_idx]).strip()
+            if ':' in ip:
+                ip_parts = ip.split(':')
+                ip = ip_parts[0].strip()
+                port = ip_parts[1].strip()
+            else:
+                port = str(row[port_idx]).strip() if (port_idx != -1 and len(row) > port_idx) else "443"
+
+            if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
+                continue
+            if not port.isdigit():
+                port = "443"
+
+            label = str(row[country_idx]).strip() if (country_idx != -1 and len(row) > country_idx) else "US"
+            code = extract_country_code(label)
+
+            if code:
+                nodes.append(f"{ip}:{port}#{code}")
+            else:
+                pending_ips.append(f"{ip}:{port}")
+
+        if pending_ips:
+            print(f"[CSV解析] 有 {len(pending_ips)} 个节点未提取到有效国家代码，启动 API 异步补全...")
+            resolved = _resolve_countries_batch(pending_ips)
+            for ipport, code in resolved.items():
+                if code:
+                    nodes.append(f"{ipport}#{code}")
+                else:
+                    nodes.append(f"{ipport}#US")
+
+    except Exception as e:
+        print(f"解析本地 CSV 文件异常: {e}")
+
+    return nodes
 
 
 def fetch_additional_source(url):
@@ -1277,6 +1364,8 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
     if target_count is None:
         target_count = DNS_UPDATE_TARGET_COUNT
 
+    dns_content_list = []   
+    dns_node_list = []      
     dns_content_list = []
     dns_node_list = []
     filtered_by_port = 0
@@ -1353,6 +1442,8 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
 
             if record_type == "A":
                 dns_content_list.append(pure_ip)
+            else:
+                pass
             else:
                 dns_content_list.append(f"{pure_ip}:{port}")
             dns_node_list.append(node_str)
@@ -1496,6 +1587,7 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
                     print(final_error)
                     send_wxpusher_notification(content=final_error, summary="DNS 更新失败")
 
+    else:   
     else:
         for attempt in range(1, DNS_UPDATE_MAX_RETRIES + 1):
             print(f"\n[TXT 记录更新] 尝试 {attempt}/{DNS_UPDATE_MAX_RETRIES}...")
@@ -1624,6 +1716,50 @@ def write_ip_txt(final_nodes, output_file,
             for line in footer_lines:
                 f.write(line + "\n")
 
+def show_interactive_menu():
+    """在终端渲染出漂亮的交互式选择菜单，支持单选或组合多选模式"""
+    print("\n" + "="*45)
+    print("      Cloudflare IP 优选工具 - 数据源选择")
+    print("="*45)
+    print(" 1. 模式一：仅加载 远程 URL 订阅优选")
+    print(" 2. 模式二：仅加载 本地 ipv4.txt 优选")
+    print(" 3. 模式三：仅加载 本地 ipv4.csv 优选")
+    print(" 4. 模式四：全加载 (URL + ipv4.txt + ipv4.csv)")
+    print(" 5. 自定义：手动组合 (例如输入 1,2 或 2,3)")
+    print(" 0. 退出程序")
+    print("="*45)
+    
+    while True:
+        try:
+            choice = input("👉 请输入您的选择并按回车: ").strip()
+            if choice == '0':
+                print("已安全退出程序。")
+                sys.exit(0)
+            elif choice == '1':
+                return [1]
+            elif choice == '2':
+                return [2]
+            elif choice == '3':
+                return [3]
+            elif choice == '4':
+                return [1, 2, 3]
+            elif choice == '5':
+                custom_input = input("👉 请输入要组合的模式编号（用逗号隔开，如 1,2）: ").strip()
+                selected = []
+                for x in custom_input.split(','):
+                    x = x.strip()
+                    if x in ['1', '2', '3']:
+                        selected.append(int(x))
+                if selected:
+                    return list(set(selected))
+                else:
+                    print("⚠️ 输入无效，请重新选择组合。")
+            else:
+                print("⚠️ 输入有误，请输入 0-5 之间的有效指令。")
+        except (KeyboardInterrupt, EOFError):
+            print("\n已强行终止。")
+            sys.exit(0)
+
 def main():
     mode_str = f"全局最优{GLOBAL_TOP_N}个" if USE_GLOBAL_MODE else f"每个国家最优{PER_COUNTRY_TOP_N}个"
     print(f"当前模式：{mode_str}，每个节点测试 {TCP_PROBES} 次 TCP 连接")
@@ -1637,24 +1773,71 @@ def main():
     if FILTER_COUNTRIES_ENABLED:
         print(f"前置白名单过滤：启用，仅保留：{', '.join(ALLOWED_COUNTRIES)}")
 
+    # 调用终端交互菜单获取用户选定的模式列表
+    selected_modes = show_interactive_menu()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     nodes = []
-    for source in ADDITIONAL_SOURCES:
-        if not source.get("enabled", True):
-            continue
-        url = source.get("url")
-        if not url:
-            continue
-        v2_nodes = fetch_additional_source(url)
-        if v2_nodes:
-            seen = set()
-            for n in nodes:
-                seen.add(n.split('#')[0])
-            for n in v2_nodes:
-                key = n.split('#')[0]
-                if key not in seen:
-                    seen.add(key)
-                    nodes.append(n)
-    print(f"合并后总计 {len(nodes)} 个节点。")
+
+    # ==================== 模式一：URL 优选远程加载 ====================
+    if 1 in selected_modes:
+        if ADDITIONAL_SOURCES:
+            print("\n[数据源：远程URL] 开始加载远程订阅列表...")
+            for source in ADDITIONAL_SOURCES:
+                if not source.get("enabled", True):
+                    continue
+                url = source.get("url")
+                if not url:
+                    continue
+                v2_nodes = fetch_additional_source(url)
+                if v2_nodes:
+                    nodes.extend(v2_nodes)
+        else:
+            print("\n⚠️ 提示：您选了模式一，但在 config.json 的 ADDITIONAL_SOURCES 中未配置任何远程 URL。")
+
+    # ==================== 模式二：本地 ipv4.txt 加载 ====================
+    if 2 in selected_modes:
+        txt_file_path = os.path.join(script_dir, "ipv4.txt")
+        if os.path.exists(txt_file_path):
+            print("\n[数据源：本地TXT] 检测到 ipv4.txt，开始自适应解析...")
+            try:
+                with open(txt_file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    txt_content = f.read()
+                    txt_nodes = parse_adaptive(txt_content)
+                    print(f"从 ipv4.txt 加载并解析出 {len(txt_nodes)} 个节点。")
+                    nodes.extend(txt_nodes)
+            except Exception as e:
+                print(f"读取本地 ipv4.txt 失败: {e}")
+        else:
+            print(f"\n⚠️ 错误：未在目录下找到本地 {txt_file_path} 文件，跳过此加载项。")
+
+    # ==================== 模式三：本地 ipv4.csv 加载 ====================
+    if 3 in selected_modes:
+        csv_file_path = os.path.join(script_dir, "ipv4.csv")
+        if os.path.exists(csv_file_path):
+            print("\n[数据源：本地CSV] 检测到 ipv4.csv，进入全格式自适应识别匹配...")
+            csv_nodes = parse_csv_adaptive(csv_file_path)
+            print(f"从 ipv4.csv 加载并智能过滤出 {len(csv_nodes)} 个可用节点。")
+            nodes.extend(csv_nodes)
+        else:
+            print(f"\n⚠️ 错误：未在目录下找到本地 {csv_file_path} 文件，跳过此加载项。")
+
+    # ==================== 全局节点提纯与去重 ====================
+    if nodes:
+        seen = set()
+        unique_nodes = []
+        for n in nodes:
+            key = n.split('#')[0]
+            if key not in seen:
+                seen.add(key)
+                unique_nodes.append(n)
+        nodes = unique_nodes
+    
+    print(f"\n================ 您选定的数据源合并去重后，总计 {len(nodes)} 个节点进入清洗过滤段 ================")
+
+    if not nodes:
+        print("没有获取到任何有效节点，退出。")
+        sys.exit(1)
 
     token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), IP_CALIBRATION_TOKEN_FILE)
     cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), IP_CALIBRATION_CACHE_FILE)
@@ -1679,10 +1862,6 @@ def main():
         if not nodes:
             print("前置黑名单过滤后无任何节点，退出程序。")
             sys.exit(0)
-
-    if not nodes:
-        print("没有获取到任何有效节点，退出。")
-        sys.exit(1)
 
     if FILTER_COUNTRIES_ENABLED and ALLOWED_COUNTRIES:
         before = len(nodes)
@@ -1736,8 +1915,8 @@ def main():
         total_countries = len(country_nodes)
         base_limit = max(1, BANDWIDTH_CANDIDATES // total_countries)
         candidates = []
-        for country, nodes in country_nodes.items():
-            nodes_sorted = sorted(nodes, key=lambda x: (-x[2], x[1]))
+        for country, nodes_list in country_nodes.items():
+            nodes_sorted = sorted(nodes_list, key=lambda x: (-x[2], x[1]))
             limit = min(len(nodes_sorted), base_limit)
             for node_str, lat, succ in nodes_sorted[:limit]:
                 candidates.append(node_str)
@@ -1771,8 +1950,8 @@ def main():
             final_selected = [node for node, _, _, _ in results[:GLOBAL_TOP_N]]
         else:
             final_selected = []
-            for country, nodes in country_nodes.items():
-                nodes_sorted = sorted(nodes, key=lambda x: (-x[2], x[1]))
+            for country, nodes_list in country_nodes.items():
+                nodes_sorted = sorted(nodes_list, key=lambda x: (-x[2], x[1]))
                 for node_str, _, _ in nodes_sorted[:PER_COUNTRY_TOP_N]:
                     final_selected.append(node_str)
     else:
@@ -1800,6 +1979,11 @@ def main():
                 if country:
                     country_scored[country].append(item)
             final_selected = []
+            for country, nodes_list in country_speed_nodes.items():
+                for node, speed in nodes_list[:PER_COUNTRY_TOP_N]:
+                    final_selected.append(node)
+            speed_map = {node: speed for node, speed in bw_results}
+            final_selected.sort(key=lambda x: speed_map.get(x, 0), reverse=True)
             for country, items in country_scored.items():
                 items.sort(key=lambda x: x[1], reverse=True)
                 for item in items[:PER_COUNTRY_TOP_N]:
