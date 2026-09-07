@@ -535,6 +535,7 @@ def extract_country_code(label):
 
     tokens = re.split(r'[\s,;|/]+', label)
 
+    # 1. 检查两位/三位代码
     for token in tokens:
         token_cleaned = re.sub(r'^[\d\s\-_.|#]+', '', token.strip())
         m3 = re.match(r'^([A-Z]{3})(?![A-Za-z])', token_cleaned)
@@ -544,16 +545,16 @@ def extract_country_code(label):
         if m2 and m2.group(1) in CODE_SET:
             return m2.group(1)
 
+    # 2. 中文子串提取（改进）
     for token in tokens:
         token_cleaned = re.sub(r'^[\d\s\-_.|#]+', '', token)
-        token_no_emoji = re.sub(r'[\U0001F1E6-\U0001F1FF]', '', token_cleaned).strip()
-        cn_match = re.match(r'^([\u4e00-\u9fff（）()]+)\d*$', token_no_emoji)
-        if cn_match:
-            cn_name = cn_match.group(1).strip()
-            code = CN_TO_CODE.get(cn_name)
+        cn_matches = re.findall(r'[\u4e00-\u9fff（）()]+', token_cleaned)
+        for cn in cn_matches:
+            code = CN_TO_CODE.get(cn)
             if code:
                 return code
 
+    # 3. 国旗 emoji
     emoji_chars = [c for c in label if '\U0001F1E6' <= c <= '\U0001F1FF']
     if len(emoji_chars) >= 2 and len(emoji_chars) % 2 == 0:
         first = ord(emoji_chars[0]) - 0x1F1E6
