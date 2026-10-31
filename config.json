@@ -195,7 +195,7 @@
     "HTTP_JITTER_SAMPLES": 3,
     "_comment_HTTP_JITTER_SAMPLES": "HTTP延迟抖动测试次数（至少3次，建议3~5次，越大越准但越慢）",
 
-    "OUTPUT_FILTER_COUNTRIES_ENABLED": true,
+    "OUTPUT_FILTER_COUNTRIES_ENABLED": false,
     "_comment_OUTPUT_FILTER_COUNTRIES_ENABLED": "【仅 ip.txt】输出白名单开关（true=仅保留下方 OUTPUT_ALLOWED_COUNTRIES 中的国家，其余剔除，过滤后为空则降级使用未过滤列表）",
 
     "OUTPUT_ALLOWED_COUNTRIES": ["HK"],
@@ -204,7 +204,7 @@
     "FILTER_IPV6_AVAILABILITY": true,
     "_comment_FILTER_IPV6_AVAILABILITY": "【仅DNS】是否过滤落地为 IPv6 的节点",
 
-    "FILTER_BLOCKED_COUNTRIES_ENABLED": false,
+    "FILTER_BLOCKED_COUNTRIES_ENABLED": true,
     "_comment_FILTER_BLOCKED_COUNTRIES_ENABLED": "【仅DNS】黑名单开关（true=屏蔽下方 BLOCKED_COUNTRIES 中的国家）",
 
     "BLOCKED_COUNTRIES": [
