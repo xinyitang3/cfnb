@@ -194,7 +194,7 @@ def load_config():
         "SOCKET_DEFAULT_TIMEOUT": 3,
         "PROGRESS_PRINT_INTERVAL": 1,
         "FILTER_COUNTRIES_ENABLED": False,
-        "ALLOWED_COUNTRIES": ["US"],
+        "ALLOWED_COUNTRIES": ["HK"],
         "PRE_FILTER_BLOCKED_ENABLED": True,
         "PRE_FILTER_BLOCKED_COUNTRIES": ["CN"],
         "PRE_FILTER_PORT_ENABLED": True,
@@ -258,6 +258,8 @@ def load_config():
         "HTTP_LATENCY_WEIGHT": 3.0,
         "JITTER_WEIGHT": 3.0,
         "HTTP_JITTER_SAMPLES": 3,
+        "OUTPUT_FILTER_COUNTRIES_ENABLED": False,
+        "OUTPUT_ALLOWED_COUNTRIES": ["HK"],
         "FILTER_IPV6_AVAILABILITY": True,
         "FILTER_BLOCKED_COUNTRIES_ENABLED": True,
         "BLOCKED_COUNTRIES": [
@@ -384,6 +386,8 @@ HTTP_TEST_METHOD = cfg["HTTP_TEST_METHOD"]
 HTTP_LATENCY_WEIGHT = cfg["HTTP_LATENCY_WEIGHT"]
 JITTER_WEIGHT = cfg["JITTER_WEIGHT"]
 HTTP_JITTER_SAMPLES = cfg["HTTP_JITTER_SAMPLES"]
+OUTPUT_FILTER_COUNTRIES_ENABLED = cfg["OUTPUT_FILTER_COUNTRIES_ENABLED"]
+OUTPUT_ALLOWED_COUNTRIES = cfg["OUTPUT_ALLOWED_COUNTRIES"]
 FILTER_IPV6_AVAILABILITY = cfg["FILTER_IPV6_AVAILABILITY"]
 FILTER_BLOCKED_COUNTRIES_ENABLED = cfg["FILTER_BLOCKED_COUNTRIES_ENABLED"]
 BLOCKED_COUNTRIES = cfg["BLOCKED_COUNTRIES"]
@@ -1744,6 +1748,8 @@ def main():
     print(f"带宽测速候选数：{BANDWIDTH_CANDIDATES}，测速文件大小：{BANDWIDTH_SIZE_MB} MB，超时：{BANDWIDTH_TIMEOUT}s")
     if FILTER_COUNTRIES_ENABLED:
         print(f"前置白名单过滤：启用，仅保留：{', '.join(ALLOWED_COUNTRIES)}")
+    if OUTPUT_FILTER_COUNTRIES_ENABLED:
+        print(f"输出白名单过滤：启用，仅保留：{', '.join(OUTPUT_ALLOWED_COUNTRIES)}")
 
     nodes = []
     for source in ADDITIONAL_SOURCES:
@@ -1875,6 +1881,31 @@ def main():
             summary="带宽测速全部失败"
         )
         speed_map = {}
+
+        # ===== 输出白名单过滤（降级分支同样生效） =====
+        if OUTPUT_FILTER_COUNTRIES_ENABLED and OUTPUT_ALLOWED_COUNTRIES:
+            allowed_set = {c.upper() for c in OUTPUT_ALLOWED_COUNTRIES}
+            before = len(results)
+            filtered_results = [
+                r for r in results
+                if '#' in r[0] and r[0].split('#')[-1].split()[0].upper() in allowed_set
+            ]
+            after = len(filtered_results)
+            if filtered_results:
+                results = filtered_results
+                if not USE_GLOBAL_MODE:
+                    country_nodes = defaultdict(list)
+                    for node_str, lat, country, succ in results:
+                        country_nodes[country].append((node_str, lat, succ))
+                print(f"\n输出白名单过滤：{before} -> {after} 个 TCP 节点（仅保留：{', '.join(sorted(allowed_set))}）")
+            else:
+                print(f"\n输出白名单过滤后仍无有效结果，将使用未过滤的 {before} 个节点作为最终节点。")
+                send_wxpusher_notification(
+                    content=f"ip.txt 输出白名单过滤后仍无有效结果（允许国家：{', '.join(sorted(allowed_set))}），已降级使用未过滤的 {before} 个节点写入 ip.txt。",
+                    summary="ip.txt 白名单过滤全部失败"
+                )
+        # =================================================
+
         if USE_GLOBAL_MODE:
             final_selected = [node for node, _, _, _ in results[:GLOBAL_TOP_N]]
         else:
@@ -1897,6 +1928,26 @@ def main():
             scored_nodes.append((node, score, speed, tcp_lat, http_lat))
 
         scored_nodes.sort(key=lambda x: x[1], reverse=True)
+
+        # ===== 输出白名单过滤（仅影响 ip.txt，不影响 DNS 更新） =====
+        if OUTPUT_FILTER_COUNTRIES_ENABLED and OUTPUT_ALLOWED_COUNTRIES:
+            allowed_set = {c.upper() for c in OUTPUT_ALLOWED_COUNTRIES}
+            before = len(scored_nodes)
+            filtered_scored = [
+                it for it in scored_nodes
+                if '#' in it[0] and it[0].split('#')[-1].split()[0].upper() in allowed_set
+            ]
+            after = len(filtered_scored)
+            if filtered_scored:
+                scored_nodes = filtered_scored
+                print(f"\n输出白名单过滤：{before} -> {after} 个测速节点（仅保留：{', '.join(sorted(allowed_set))}）")
+            else:
+                print(f"\n输出白名单过滤后仍无有效结果，将使用未过滤的 {before} 个节点作为最终节点。")
+                send_wxpusher_notification(
+                    content=f"ip.txt 输出白名单过滤后仍无有效结果（允许国家：{', '.join(sorted(allowed_set))}），已降级使用未过滤的 {before} 个节点写入 ip.txt。",
+                    summary="ip.txt 白名单过滤全部失败"
+                )
+        # ================================================================
 
         if USE_GLOBAL_MODE:
             final_selected = [item[0] for item in scored_nodes[:GLOBAL_TOP_N]]
