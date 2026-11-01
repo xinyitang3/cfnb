@@ -519,7 +519,7 @@ RISK_LEVEL_ORDER = {
 
 def get_ip_risk_level(ip):
     """查询单个 IP 的风险等级字符串，失败返回 '未知'"""
-    url = f"https://api.ipapi.is/?q={ip}"
+    url = f"https://api.090227.xyz/api/ipapi?ip={ip}"
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()

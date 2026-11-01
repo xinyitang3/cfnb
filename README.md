@@ -777,7 +777,7 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 > 各阶段对应域名见上方“涉及域名”列表。
 
 **涉及域名：**  
-`cm.edu.kg` · `ipinfo.io` · `090227.xyz` · `cloudflare.com` · `zjiecode.com` · `pages.dev` · `ipapi.is` · `github.com` · `githubusercontent.com`
+`cm.edu.kg` · `ipinfo.io` · `090227.xyz` · `cloudflare.com` · `zjiecode.com` · `pages.dev` · `github.com` · `githubusercontent.com`
 
 **建议：**  
 1. 检查本机能否直连上述域名 → 能通设 `DIRECT`，不通设 `PROXY`  
@@ -884,8 +884,7 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 
 ## 🙏 致谢
 
-- 节点数据源 & 检测 API：[cmliussss](https://github.com/cmliussss)
-- IP 风险检测 API：[ipapi.is](https://ipapi.is/)
+- 节点数据源 & 检测 API & IP 风险检测 API：[cmliussss](https://github.com/cmliussss)
 - IP 地区校准：[ipinfo.io](https://ipinfo.io/)
 - 微信通知服务：[WxPusher](https://wxpusher.zjiecode.com/)
 
