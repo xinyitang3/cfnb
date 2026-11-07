@@ -9,7 +9,7 @@
 
 > ⭐ **如果觉得好用，点个 Star 支持一下～**
 
-这是一个全自动的 **Cloudflare CDN 节点优选工具**。它通过 **TCP 延迟筛选** + **IP 可用性二次检测** + **HTTP 延迟及抖动检测** + **真实带宽测速** 多重机制，从多个公开数据源中聚合节点，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），筛选出当前网络环境下速度最快、延迟最低、抖动最小的 Cloudflare IP，并支持**自动更新至 Cloudflare DNS** 以及**同步至 GitHub 仓库**，同时支持微信实时通知。
+这是一个全自动的 **Cloudflare CDN 节点优选工具**。它通过 **TCP 延迟筛选** + **反代验证** + **边缘验证** + **HTTP 延迟及抖动检测** + **真实带宽测速** 多重机制，从多个公开数据源中聚合节点，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），筛选出当前网络环境下速度最快、延迟最低、抖动最小的 Cloudflare IP，并支持**自动更新至 Cloudflare DNS** 以及**同步至 GitHub 仓库**，同时支持微信实时通知。
 
 > [!IMPORTANT]
 > **跨平台支持**：本工具同时兼容 **Windows** 和 **Linux** 操作系统。
@@ -36,8 +36,9 @@
 | :--- | :--- |
 | 🌐 **多模式筛选** | 全局最优 TopN / 分国家最优 TopN |
 | ⚡ **TCP 连接测试** | 并发测延迟，可设成功率阈值 |
-| 🔍 **可用性二次检测** | API 验证代理能力 |
-| 🔍 **HTTP 延迟与抖动检测** | 多次探测 HTTP 响应，计算平均延迟与抖动（标准差），过滤非 Cloudflare 节点，提升代理兼容性 |
+| 🔍 **反代验证** | 直连探针验证节点是否真能作为 ProxyIP 转发 |
+| 🔍 **边缘验证** | 探测 HTTP 响应，校验 Cloudflare 边缘特征，过滤非 Cloudflare 节点 |
+| 🔍 **HTTP 延迟与抖动检测** | 多次探测 HTTP 响应，计算平均延迟与抖动（标准差），提升代理兼容性 |
 | 📶 **真实带宽测速** | curl 下载测速，实测吞吐量 |
 | ⚖️ **综合加权排序** | 同时考虑带宽、TCP 延迟、HTTP 延迟与抖动，四个权重可自由调整，选出综合体验最优的节点 |
 | 🧩 **多源自适应聚合** | 支持多个数据源，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），统一转换为标准格式 |
@@ -263,7 +264,7 @@ python3 main.py
 | `USE_GLOBAL_MODE` | `boolean` | `true` | `true`=全局优选；`false`=分国家优选 |
 | `GLOBAL_TOP_N` | `int` | `15` | 全局模式保留节点数 |
 | `PER_COUNTRY_TOP_N` | `int` | `1` | 分国家模式每国保留节点数 |
-| `BANDWIDTH_CANDIDATES` | `int` | `150` | 进入测速的候选节点数 |
+| `BANDWIDTH_CANDIDATES` | `int` | `300` | 进入测速的候选节点数 |
 | `DNS_UPDATE_TARGET_COUNT` | `int` | `15` | DNS 更新时写入的最大 IP 数量，独立于筛选模式 |
 
 ### TCP 连接测试参数
@@ -273,7 +274,7 @@ python3 main.py
 | `TCP_PROBES` | `int` | `1` | 每个节点 TCP 测试次数 |
 | `MIN_SUCCESS_RATE` | `float` | `1.0` | 最低成功率阈值（0.0~1.0） |
 | `TCP_LATENCY_WEIGHT` | `float` | `0.0` | TCP延迟在综合排序中的权重（越大越排斥高TCP延迟） |
-| `TIMEOUT` | `float` | `2.0` | 单次 TCP 连接超时（秒） |
+| `TIMEOUT` | `float` | `3.0` | 单次 TCP 连接超时（秒） |
 | `SOCKET_DEFAULT_TIMEOUT` | `int` | `3` | 全局 Socket 默认超时（秒），防止永久阻塞 |
 | `PROGRESS_PRINT_INTERVAL` | `float` | `1` | 进度打印刷新间隔（秒），避免频繁 I/O |
 
@@ -327,6 +328,7 @@ python3 main.py
 | `BLOCKED_COUNTRIES` | `array` | `BD, BI, BY, CD, CF, CN, CU, DE, ET, HK,`<br>`IR, KP, LY, MO, NG, NL, PK, RU, SD, SO,`<br>`SY, TH, TW, UA, VE, VN, YE, ZW` | DNS 更新时需要剔除的国家代码列表（共 28 个） |
 | `DNS_IP_RISK_FILTER_ENABLED` | `boolean` | `false` | 是否启用 IP 风险等级过滤 |
 | `DNS_IP_RISK_MAX_LEVEL` | `string` | `高风险` | 允许的最高风险等级（可选：极度纯净、纯净、轻微风险、高风险、极度危险） |
+| `IP_RISK_TIMEOUT` | `int` | `3` | IP 风险查询 API 读取超时（秒） |
 
 > **说明**：  
 > - 该过滤**仅作用于 Cloudflare DNS 批量更新环节**，不会影响 `ip.txt` 的内容和 GitHub 推送。  
@@ -386,8 +388,9 @@ python3 main.py
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `IP_CALIBRATION_ENABLED` | `boolean` | `false` | 是否启用 IP 地区校准（基于 ipinfo.io） |
-| `TOKEN_FAILURE_THRESHOLD` | `float` | `3` | Token连续失败多少次后跳过（达到该次数则切换下一个Token） |
+| `TOKEN_FAILURE_THRESHOLD` | `int` | `3` | Token连续失败多少次后跳过（达到该次数则切换下一个Token） |
 | `IP_CALIBRATION_MIN_INTERVAL` | `float` | `0.1` | 请求最小间隔（秒） |
+| `IP_CALIBRATION_REQUEST_TIMEOUT` | `int` | `3` | ipinfo.io 单次请求超时（秒） |
 | `IP_CALIBRATION_TOKEN_FILE` | `string` | `"valid_tokens.txt"` | ipinfo.io Token 文件名 |
 | `IP_CALIBRATION_CACHE_FILE` | `string` | `"ipinfo_cache.txt"` | 校准结果缓存文件名 |
 
@@ -396,39 +399,41 @@ python3 main.py
 > 程序会自动校验 Token 有效性并显示进度，当所有 Token 均触发速率限制时，会通过微信通知。
 
 <details>
-<summary>🔧 高级参数（可用性 /HTTP / 带宽 / 并发 / 重试 / 广告/ 输出）</summary>
+<summary>🔧 高级参数（反代验证 / 边缘验证 / 带宽 / 并发 / 重试 / 广告 / 输出）</summary>
 
-**可用性检测参数**
-
-| 参数 | 类型 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `TEST_AVAILABILITY` | `boolean` | `true` | 是否进行可用性二次筛选 |
-| `AVAILABILITY_CHECK_API` | `string` | `"https://api.090227.xyz/check"` | 可用性检测 API 地址 |
-| `AVAILABILITY_TIMEOUT` | `int` | `3` | 可用性 API 读取超时（秒） |
-| `AVAILABILITY_CONNECT_TIMEOUT` | `int` | `3` | 可用性 API 连接超时（秒） |
-| `AVAILABILITY_RETRY_MAX` | `int` | `2` | 可用性检测最大重试轮数 |
-| `AVAILABILITY_RETRY_DELAY` | `int` | `3` | 可用性检测重试间隔（秒） |
-| `AVAILABILITY_INNER_RETRY_ENABLED` | `boolean` | `true` | 可用性检测是否启用单节点内部重试 |
-| `AVAILABILITY_INNER_RETRY_MAX` | `int` | `2` | 可用性检测单节点内部最大重试次数 |
-| `AVAILABILITY_INNER_RETRY_DELAY` | `int` | `3` | 可用性检测单节点内部重试间隔（秒） |
-
-> 💡 IPv6 过滤逻辑：通过 API 返回的 `inferred_stack` 判断，仅淘汰 `ipv6_only` 节点，保留 `ipv4_only` 和 `dual_stack` 节点。
-
-**HTTP 检测参数**
+**反代验证参数**
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `HTTP_TEST_ENABLED` | `boolean` | `true` | 是否启用 HTTP检测（过滤 HTTP 响应头非Cloudflare 的节点） |
-| `HTTP_TEST_TIMEOUT` | `int` | `3` | 单次 HTTP 请求读取超时（秒） |
-| `HTTP_TEST_CONNECT_TIMEOUT` | `int` | `3` | HTTP 检测的连接超时（秒），与读取超时分离 |
-| `HTTP_TEST_INNER_RETRY_ENABLED` | `boolean` | `true` | HTTP 检测是否启用单节点内部重试 |
-| `HTTP_TEST_MAX_RETRIES` | `int` | `2` | 单节点 HTTP 请求超时重试次数 |
-| `HTTP_TEST_RETRY_DELAY` | `int` | `3` | HTTP 请求重试间隔（秒） |
-| `HTTP_TEST_MAX_ROUNDS` | `int` | `2` | 整体失败（通过率为0）时的最大重试轮数 |
-| `HTTP_TEST_ROUND_DELAY` | `int` | `3` | 整体重试间隔（秒） |
-| `HTTP_TEST_METHOD` | `string` | `"HEAD"` | 请求方法（`GET` 或 `HEAD`） |
+| `TEST_AVAILABILITY` | `boolean` | `true` | 是否对候选节点进行反代验证（验证是否为反代 CF 的 ProxyIP） |
+| `PROBE_HOST` | `string` | `"cloudflare-ech.com"` | 反代验证的探针域名（默认 cloudflare-ech.com，可换成你自己的域名） |
+| `PROBE_PATH` | `string` | `"/cdn-cgi/trace"` | 反代验证的探针路径（默认 /cdn-cgi/trace） |
+| `AVAILABILITY_TIMEOUT` | `int` | `3` | 反代验证探针读取超时（秒） |
+| `AVAILABILITY_CONNECT_TIMEOUT` | `int` | `3` | 反代验证探针连接超时（秒） |
+| `AVAILABILITY_RETRY_MAX` | `int` | `3` | 反代验证整体失败（通过率为0）时的最大重试轮数 |
+| `AVAILABILITY_RETRY_DELAY` | `int` | `3` | 反代验证整体重试间隔（秒） |
+| `AVAILABILITY_INNER_RETRY_ENABLED` | `boolean` | `true` | 反代验证是否启用单节点内部重试 |
+| `AVAILABILITY_INNER_RETRY_MAX` | `int` | `3` | 反代验证单节点内部最大重试次数 |
+| `AVAILABILITY_INNER_RETRY_DELAY` | `int` | `3` | 反代验证单节点内部重试间隔（秒） |
+| `AVAILABILITY_TEST_ROUNDS` | `int` | `3` | 反代验证外层轮数（每轮必须拿到一次合规响应，全部轮成功才通过） |
 
-> 💡 HTTP 检测在可用性检测之后、带宽测速之前执行，仅淘汰非 `Code: 400` 和 `Server: cloudflare` 的节点，其余均视为可用。
+> 💡 IPv6 过滤逻辑：通过探针返回的 `ip` 字段判断，仅淘汰 `ipv6_only` 节点，保留 `ipv4_only` 和 `dual_stack` 节点。
+
+**边缘验证参数**
+
+| 参数 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `HTTP_TEST_ENABLED` | `boolean` | `true` | 是否在反代验证后开启边缘验证（过滤 HTTP 响应头非 Cloudflare 的节点） |
+| `HTTP_TEST_TIMEOUT` | `int` | `3` | 单次边缘验证读取超时（秒） |
+| `HTTP_TEST_CONNECT_TIMEOUT` | `int` | `3` | 边缘验证的连接超时（秒），与读取超时分离 |
+| `HTTP_TEST_INNER_RETRY_ENABLED` | `boolean` | `true` | 边缘验证是否启用单节点内部重试 |
+| `HTTP_TEST_MAX_RETRIES` | `int` | `3` | 单次边缘验证超时后的最大重试次数 |
+| `HTTP_TEST_RETRY_DELAY` | `int` | `3` | 单次边缘验证重试间隔（秒） |
+| `HTTP_TEST_MAX_ROUNDS` | `int` | `3` | 边缘验证整体失败（通过率为0）时的最大重试轮数 |
+| `HTTP_TEST_ROUND_DELAY` | `int` | `3` | 边缘验证整体重试间隔（秒） |
+| `HTTP_TEST_METHOD` | `string` | `"HEAD"` | 边缘验证请求方法（`GET` 或 `HEAD`） |
+
+> 💡 边缘验证在反代验证之后、带宽测速之前执行，仅淘汰非 `Code: 400` 和 `Server: cloudflare` 的节点，其余均视为可用。
 
 **带宽测速参数**
 
@@ -436,10 +441,10 @@ python3 main.py
 | :--- | :--- | :--- | :--- |
 | `BANDWIDTH_SIZE_MB` | `float` | `1.0` | 测速下载文件大小（MB） |
 | `BANDWIDTH_TIMEOUT` | `int` | `3` | 单个节点带宽测速超时（秒） |
-| `BANDWIDTH_RETRY_MAX` | `int` | `2` | 带宽测速整体重试轮数 |
+| `BANDWIDTH_RETRY_MAX` | `int` | `3` | 带宽测速整体重试轮数 |
 | `BANDWIDTH_RETRY_DELAY` | `int` | `3` | 带宽测速重试间隔（秒） |
 | `BANDWIDTH_URL_TEMPLATE` | `string` | `"{scheme}://speed.cloudflare.com:{port}/__down?bytes={bytes}"` | 测速 URL 模板 |
-| `BANDWIDTH_PROCESS_BUFFER` | `int` | `2` | curl 进程额外缓冲时间（秒） |
+| `BANDWIDTH_PROCESS_BUFFER` | `int` | `3` | curl 进程额外缓冲时间（秒） |
 | `BANDWIDTH_CONNECT_TIMEOUT` | `int` | `3` | curl 测速连接超时（秒） |
 
 **并发控制参数**
@@ -448,10 +453,11 @@ python3 main.py
 | :--- | :--- | :--- | :--- |
 | `IP_CALIBRATION_CONCURRENCY` | `int` | `300` | 地区校准的异步并发数 |
 | `MAX_WORKERS` | `int` | `300` | TCP 并发测试最大线程数 |
-| `AVAILABILITY_WORKERS` | `int` | `32` | 可用性检测并发数 |
-| `FALLBACK_WORKERS` | `int` | `32` | 备用国家查询的并发线程数（当标签无法识别时自动调用可用性API查询国家） |
-| `HTTP_TEST_WORKERS` | `int` | `32` | HTTP 检测并发线程数 |
+| `AVAILABILITY_WORKERS` | `int` | `300` | 反代验证并发数 |
+| `FALLBACK_WORKERS` | `int` | `300` | 备用国家查询的并发线程数（当标签无法识别时通过反代验证查询） |
+| `HTTP_TEST_WORKERS` | `int` | `300` | 边缘验证并发线程数 |
 | `BANDWIDTH_WORKERS` | `int` | `3` | 带宽测速并发数 |
+| `IP_RISK_WORKERS` | `int` | `300` | IP 风险查询的并发线程数 |
 
 **重试策略配置**
 
@@ -551,7 +557,7 @@ python3 main.py
 ### 第三步：测试运行
 
 1. 手动运行一次优选程序：`python main.py`（Windows）或 `python3 main.py`（Linux）。
-2. 程序运行结束后，观察控制台输出。若看到 `✅ Cloudflare DNS 批量更新成功！`，则配置成功。
+2. 程序运行结束后，观察控制台输出。若看到 `DNS 更新成功，N 个 IP`（A 记录）或 `TXT 更新成功，N 条记录`（TXT 记录），则配置成功。
 
 ### 工作原理
 
@@ -749,7 +755,7 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 ### 💡 为什么这样对接更有效？
 - **低延迟**：`main.py` 已经通过 TCP 握手筛选出了延迟最低的节点。
 - **高带宽**：结果经过真实 `curl` 下载测试，排在前面的节点具有更强的并发吞吐能力。
-- **高可用**：通过 `AVAILABILITY_CHECK_API` 过滤了那些能 Ping 通但无法正常通过代理请求的无效 IP。
+- **高可用**：通过反代验证 + 边缘验证，过滤了那些能 Ping 通但无法正常作为 ProxyIP 转发、或根本不是 Cloudflare 边缘的无效 IP。
 - **自动更新**：DNS 记录随优选结果自动刷新，无需手动修改配置。
 
 ### 注意事项
@@ -769,15 +775,16 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 | 测试阶段 | 是否走代理 | 说明 |
 | :--- | :--- | :--- |
 | TCP 延迟测试 (Socket) | ❌ 直连 | 反映本机到节点的 RTT |
-| HTTP 检测 (requests) | ❌ 直连 | 过滤非Cloudflare节点 |
+| 反代验证 (`requests`) | ❌ 直连 | 验证节点能否作为 ProxyIP 转发 |
+| 边缘验证 (requests) | ❌ 直连 | 校验 Cloudflare 边缘特征 |
 | 带宽测速 (curl) | ❌ 直连 | 反映本机到 CDN 的速度 |
-| API 请求类 (requests) | ✅ 跟随系统代理 | 获取节点、可用性、微信通知等 |
+| API 请求类 (requests) | ✅ 跟随系统代理 | 获取节点、IP 风险查询、微信通知等 |
 | Git 推送 (git) | ✅ 跟随系统代理 | 涉及 `github.com` 等 |
 
 > 各阶段对应域名见上方“涉及域名”列表。
 
 **涉及域名：**  
-`cm.edu.kg` · `ipinfo.io` · `090227.xyz` · `cloudflare.com` · `zjiecode.com` · `pages.dev` · `github.com` · `githubusercontent.com`
+`cm.edu.kg` · `ipinfo.io` · `090227.xyz` · `cloudflare-ech.com` · `cloudflare.com` · `zjiecode.com` · `pages.dev` · `github.com` · `githubusercontent.com`
 
 **建议：**  
 1. 检查本机能否直连上述域名 → 能通设 `DIRECT`，不通设 `PROXY`  
@@ -844,14 +851,14 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 11. **TCP 测试无节点通过**  
 若所有节点的 TCP 连接成功率均低于 `MIN_SUCCESS_RATE`，程序将直接退出并提示检查网络或降低成功率阈值。此为第一道硬性门槛，无回退机制。
 
-12. **可用性检测全部失败**  
-若 API 接口异常导致可用性检测通过率为 0%，程序会自动跳过此步骤并回退到 TCP 筛选结果，同时发送微信提醒（如已配置）。
+12. **反代验证全部失败**  
+若多轮重试后仍无节点通过反代验证，程序将跳过该过滤，直接使用 TCP 候选池继续后续边缘验证与带宽测速，并发送微信通知（如已启用）。
 
-13. **HTTP检测全部失败**  
-若所有候选节点均返回非 `400` / `cloudflare` 或连接失败，程序将降级使用过滤前列表（即可用性检测通过的结果），并发送微信通知（如已启用）。
+13. **边缘验证全部失败**  
+若所有候选节点均返回非 `400` / `cloudflare` 或连接失败，程序将降级使用反代验证通过的列表继续带宽测速，并发送微信通知（如已启用）。
 
 14. **带宽测速全部失败**  
-若 curl 测速多次重试仍无有效带宽数据，程序将回退到 TCP 延迟排序结果作为最终优选节点，并发送微信通知。
+若 curl 测速多次重试仍无有效带宽数据，程序将回退到 TCP 延迟排序结果作为最终优选节点，并发送微信通知（如已启用）。
 
 </details>
 
@@ -884,7 +891,7 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 
 ## 🙏 致谢
 
-- 节点数据源 & 检测 API & IP 风险检测 API：[cmliussss](https://github.com/cmliussss)
+- 节点数据源 & IP 风险检测 API：[cmliussss](https://github.com/cmliussss)
 - IP 地区校准：[ipinfo.io](https://ipinfo.io/)
 - 微信通知服务：[WxPusher](https://wxpusher.zjiecode.com/)
 

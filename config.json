@@ -2,7 +2,7 @@
     "_comment": "Cloudflare IP 优选工具配置文件 - 请根据需求修改下方参数",
 
     "USE_GLOBAL_MODE": true,
-    "_comment_USE_GLOBAL_MODE": "true=全局最优15个；false=每个国家最优1个",
+    "_comment_USE_GLOBAL_MODE": "true=全局最优N个；false=每个国家最优N个",
 
     "GLOBAL_TOP_N": 15,
     "_comment_GLOBAL_TOP_N": "全局模式下最终保留的节点数量",
@@ -10,7 +10,7 @@
     "PER_COUNTRY_TOP_N": 1,
     "_comment_PER_COUNTRY_TOP_N": "分国家模式下每个国家保留的节点数量",
 
-    "BANDWIDTH_CANDIDATES": 150,
+    "BANDWIDTH_CANDIDATES": 300,
     "_comment_BANDWIDTH_CANDIDATES": "进入带宽测速的候选节点数（从TCP通过者中选取前N个）",
 
     "TCP_PROBES": 1,
@@ -22,7 +22,7 @@
     "TCP_LATENCY_WEIGHT": 0.0,
     "_comment_TCP_LATENCY_WEIGHT": "TCP延迟在综合排序中的权重（越大越排斥高TCP延迟）",
 
-    "TIMEOUT": 2.0,
+    "TIMEOUT": 3.0,
     "_comment_TIMEOUT": "单次 TCP 连接超时时间（秒）",
 
     "SOCKET_DEFAULT_TIMEOUT": 3,
@@ -34,7 +34,7 @@
     "FILTER_COUNTRIES_ENABLED": false,
     "_comment_FILTER_COUNTRIES_ENABLED": "前置白名单开关（true=仅保留下方 ALLOWED_COUNTRIES 中的国家，其余在 TCP 测试前剔除）",
 
-    "ALLOWED_COUNTRIES": ["US"],
+    "ALLOWED_COUNTRIES": ["HK"],
     "_comment_ALLOWED_COUNTRIES": "前置白名单列表（仅在 FILTER_COUNTRIES_ENABLED=true 时生效）",
 
     "PRE_FILTER_BLOCKED_ENABLED": true,
@@ -114,6 +114,9 @@
     "IP_CALIBRATION_MIN_INTERVAL": 0.1,
     "_comment_IP_CALIBRATION_MIN_INTERVAL": "地区校准的最小请求间隔（秒）",
 
+    "IP_CALIBRATION_REQUEST_TIMEOUT": 3,
+    "_comment_IP_CALIBRATION_REQUEST_TIMEOUT": "ipinfo.io 单次请求超时（秒）",
+
     "IP_CALIBRATION_TOKEN_FILE": "valid_tokens.txt",
     "_comment_IP_CALIBRATION_TOKEN_FILE": "地区校准的 token 文件名（位于脚本同目录）",
 
@@ -133,67 +136,73 @@
     "_comment_FORCE_DIRECT": "是否强制所有网络请求直连（true=清除系统代理，全部直连）",
 
     "TEST_AVAILABILITY": true,
-    "_comment_TEST_AVAILABILITY": "是否对候选节点进行可用性二次筛选（API检测）",
+    "_comment_TEST_AVAILABILITY": "是否对候选节点进行反代验证（验证是否为反代 CF 的 ProxyIP）",
 
-    "AVAILABILITY_CHECK_API": "https://api.090227.xyz/check",
-    "_comment_AVAILABILITY_CHECK_API": "IP 可用性检测 API 地址",
+    "PROBE_HOST": "cloudflare-ech.com",
+    "_comment_PROBE_HOST": "反代验证的探针域名（默认 cloudflare-ech.com，可换成你自己的域名）",
+
+    "PROBE_PATH": "/cdn-cgi/trace",
+    "_comment_PROBE_PATH": "反代验证的探针路径（默认 /cdn-cgi/trace）",
 
     "AVAILABILITY_TIMEOUT": 3,
-    "_comment_AVAILABILITY_TIMEOUT": "可用性 API 读取超时（秒）",
+    "_comment_AVAILABILITY_TIMEOUT": "反代验证探针读取超时（秒）",
 
     "AVAILABILITY_CONNECT_TIMEOUT": 3,
-    "_comment_AVAILABILITY_CONNECT_TIMEOUT": "可用性 API 连接超时（秒）",
+    "_comment_AVAILABILITY_CONNECT_TIMEOUT": "反代验证探针连接超时（秒）",
 
-    "AVAILABILITY_RETRY_MAX": 2,
-    "_comment_AVAILABILITY_RETRY_MAX": "可用性检测整体失败（通过率为0）时的最大重试轮数",
+    "AVAILABILITY_RETRY_MAX": 3,
+    "_comment_AVAILABILITY_RETRY_MAX": "反代验证整体失败（通过率为0）时的最大重试轮数",
 
     "AVAILABILITY_RETRY_DELAY": 3,
-    "_comment_AVAILABILITY_RETRY_DELAY": "可用性检测重试间隔（秒）",
+    "_comment_AVAILABILITY_RETRY_DELAY": "反代验证整体重试间隔（秒）",
 
     "AVAILABILITY_INNER_RETRY_ENABLED": true,
-    "_comment_AVAILABILITY_INNER_RETRY_ENABLED": "可用性检测是否启用单节点内部重试",
+    "_comment_AVAILABILITY_INNER_RETRY_ENABLED": "反代验证是否启用单节点内部重试",
 
-    "AVAILABILITY_INNER_RETRY_MAX": 2,
-    "_comment_AVAILABILITY_INNER_RETRY_MAX": "可用性检测单节点内部最大重试次数",
+    "AVAILABILITY_INNER_RETRY_MAX": 3,
+    "_comment_AVAILABILITY_INNER_RETRY_MAX": "反代验证单节点内部最大重试次数",
 
     "AVAILABILITY_INNER_RETRY_DELAY": 3,
-    "_comment_AVAILABILITY_INNER_RETRY_DELAY": "可用性检测单节点内部重试间隔（秒）",
+    "_comment_AVAILABILITY_INNER_RETRY_DELAY": "反代验证单节点内部重试间隔（秒）",
+
+    "AVAILABILITY_TEST_ROUNDS": 3,
+    "_comment_AVAILABILITY_TEST_ROUNDS": "反代验证外层轮数（每轮必须拿到一次合规响应，全部轮成功才通过）",
 
     "HTTP_TEST_ENABLED": true,
-    "_comment_HTTP_TEST_ENABLED": "是否在可用性测试后开启 HTTP检测（过滤 HTTP 响应头非Cloudflare 的节点）",
+    "_comment_HTTP_TEST_ENABLED": "是否在反代验证后开启边缘验证（过滤 HTTP 响应头非 Cloudflare 的节点）",
 
     "HTTP_TEST_TIMEOUT": 3,
-    "_comment_HTTP_TEST_TIMEOUT": "单次 HTTP 请求读取超时（秒）",
+    "_comment_HTTP_TEST_TIMEOUT": "单次边缘验证读取超时（秒）",
 
     "HTTP_TEST_CONNECT_TIMEOUT": 3,
-    "_comment_HTTP_TEST_CONNECT_TIMEOUT": "HTTP 检测的连接超时（秒）",
+    "_comment_HTTP_TEST_CONNECT_TIMEOUT": "边缘验证的连接超时（秒）",
 
-    "HTTP_TEST_MAX_ROUNDS": 2,
-    "_comment_HTTP_TEST_MAX_ROUNDS": "HTTP 检测整体失败（通过率为0）时的最大重试轮数",
+    "HTTP_TEST_MAX_ROUNDS": 3,
+    "_comment_HTTP_TEST_MAX_ROUNDS": "边缘验证整体失败（通过率为0）时的最大重试轮数",
 
     "HTTP_TEST_ROUND_DELAY": 3,
-    "_comment_HTTP_TEST_ROUND_DELAY": "HTTP 检测整体重试间隔（秒）",
+    "_comment_HTTP_TEST_ROUND_DELAY": "边缘验证整体重试间隔（秒）",
 
     "HTTP_TEST_INNER_RETRY_ENABLED": true,
-    "_comment_HTTP_TEST_INNER_RETRY_ENABLED": "HTTP 检测是否启用单节点内部重试",
+    "_comment_HTTP_TEST_INNER_RETRY_ENABLED": "边缘验证是否启用单节点内部重试",
 
-    "HTTP_TEST_MAX_RETRIES": 2,
-    "_comment_HTTP_TEST_MAX_RETRIES": "HTTP 请求超时后的最大重试次数",
+    "HTTP_TEST_MAX_RETRIES": 3,
+    "_comment_HTTP_TEST_MAX_RETRIES": "单次边缘验证超时后的最大重试次数",
 
     "HTTP_TEST_RETRY_DELAY": 3,
-    "_comment_HTTP_TEST_RETRY_DELAY": "HTTP 请求重试间隔（秒）",
+    "_comment_HTTP_TEST_RETRY_DELAY": "单次边缘验证重试间隔（秒）",
 
     "HTTP_TEST_METHOD": "HEAD",
-    "_comment_HTTP_TEST_METHOD": "HTTP 请求方法（GET 或 HEAD）",
+    "_comment_HTTP_TEST_METHOD": "边缘验证请求方法（GET 或 HEAD）",
 
     "HTTP_LATENCY_WEIGHT": 3.0,
-    "_comment_HTTP_LATENCY_WEIGHT": "HTTP延迟在综合排序中的权重（越大越排斥高HTTP延迟）",
+    "_comment_HTTP_LATENCY_WEIGHT": "边缘验证延迟在综合排序中的权重（越大越排斥高延迟）",
 
     "JITTER_WEIGHT": 3.0,
-    "_comment_JITTER_WEIGHT": "HTTP延迟抖动（标准差）在综合排序中的权重（越大越排斥延迟波动大的节点）",
+    "_comment_JITTER_WEIGHT": "边缘验证延迟抖动（标准差）在综合排序中的权重（越大越排斥延迟波动大的节点）",
 
     "HTTP_JITTER_SAMPLES": 3,
-    "_comment_HTTP_JITTER_SAMPLES": "HTTP延迟抖动测试次数（至少3次，建议3~5次，越大越准但越慢）",
+    "_comment_HTTP_JITTER_SAMPLES": "边缘验证延迟抖动测试次数（至少3次，建议3~5次，越大越准但越慢）",
 
     "OUTPUT_FILTER_COUNTRIES_ENABLED": false,
     "_comment_OUTPUT_FILTER_COUNTRIES_ENABLED": "【仅 ip.txt】输出白名单开关（true=仅保留下方 OUTPUT_ALLOWED_COUNTRIES 中的国家，其余剔除，过滤后为空则降级使用未过滤列表）",
@@ -220,6 +229,9 @@
     "DNS_IP_RISK_MAX_LEVEL": "高风险",
     "_comment_DNS_IP_RISK_MAX_LEVEL": "【仅DNS】允许的最高风险等级（极度纯净 / 纯净 / 轻微风险 / 高风险 / 极度危险）",
 
+    "IP_RISK_TIMEOUT": 3,
+    "_comment_IP_RISK_TIMEOUT": "IP 风险查询 API 读取超时（秒）",
+
     "DNS_UPDATE_TARGET_COUNT": 15,
     "_comment_DNS_UPDATE_TARGET_COUNT": "DNS 更新时写入的最大 IP 数量，独立于筛选模式",
 
@@ -229,7 +241,7 @@
     "BANDWIDTH_TIMEOUT": 3,
     "_comment_BANDWIDTH_TIMEOUT": "单个节点带宽测速超时（秒）",
 
-    "BANDWIDTH_RETRY_MAX": 2,
+    "BANDWIDTH_RETRY_MAX": 3,
     "_comment_BANDWIDTH_RETRY_MAX": "带宽测速整体失败（结果为空）时的最大重试轮数",
 
     "BANDWIDTH_RETRY_DELAY": 3,
@@ -238,7 +250,7 @@
     "BANDWIDTH_URL_TEMPLATE": "{scheme}://speed.cloudflare.com:{port}/__down?bytes={bytes}",
     "_comment_BANDWIDTH_URL_TEMPLATE": "带宽测速 URL 模板，{bytes} 将被替换为实际字节数",
 
-    "BANDWIDTH_PROCESS_BUFFER": 2,
+    "BANDWIDTH_PROCESS_BUFFER": 3,
     "_comment_BANDWIDTH_PROCESS_BUFFER": "带宽测速 curl 进程额外缓冲时间（秒）",
 
     "BANDWIDTH_CONNECT_TIMEOUT": 3,
@@ -253,17 +265,20 @@
     "MAX_WORKERS": 300,
     "_comment_MAX_WORKERS": "TCP 并发测试的最大线程数",
 
-    "AVAILABILITY_WORKERS": 32,
-    "_comment_AVAILABILITY_WORKERS": "可用性检测的并发线程数",
+    "AVAILABILITY_WORKERS": 300,
+    "_comment_AVAILABILITY_WORKERS": "反代验证的并发线程数",
 
-    "FALLBACK_WORKERS": 32,
-    "_comment_FALLBACK_WORKERS": "备用国家查询的并发线程数（当标签无法识别时自动调用可用性 API 查询）",
+    "FALLBACK_WORKERS": 300,
+    "_comment_FALLBACK_WORKERS": "备用国家查询的并发线程数（当标签无法识别时通过反代验证查询）",
 
-    "HTTP_TEST_WORKERS": 32,
-    "_comment_HTTP_TEST_WORKERS": "HTTP 检测的并发线程数",
+    "HTTP_TEST_WORKERS": 300,
+    "_comment_HTTP_TEST_WORKERS": "边缘验证的并发线程数",
 
     "BANDWIDTH_WORKERS": 3,
     "_comment_BANDWIDTH_WORKERS": "带宽测速的并发线程数",
+
+    "IP_RISK_WORKERS": 300,
+    "_comment_IP_RISK_WORKERS": "IP 风险查询的并发线程数",
 
     "_comment_retry": "重试策略配置",
     "DNS_UPDATE_MAX_RETRIES": 3,
@@ -296,10 +311,10 @@
     "_comment_IP_TXT_SHOW_BANDWIDTH": "ip.txt 中是否附带带宽测速信息（如 5.20 Mbps）",
 
     "IP_TXT_SHOW_HTTP_LATENCY": false,
-    "_comment_IP_TXT_SHOW_HTTP_LATENCY": "ip.txt 中是否附带 HTTP 延迟信息（如 30.00 ms）",
+    "_comment_IP_TXT_SHOW_HTTP_LATENCY": "ip.txt 中是否附带边缘验证延迟信息（如 30.00 ms）",
 
     "IP_TXT_SHOW_HTTP_JITTER": false,
-    "_comment_IP_TXT_SHOW_HTTP_JITTER": "ip.txt 中是否附带 HTTP 抖动信息（如 2.50 ms）",
+    "_comment_IP_TXT_SHOW_HTTP_JITTER": "ip.txt 中是否附带边缘验证抖动信息（如 2.50 ms）",
 
     "IP_TXT_SHOW_LATENCY": false,
     "_comment_IP_TXT_SHOW_LATENCY": "ip.txt 中是否附带 TCP 延迟信息（如 50.30 ms）"
