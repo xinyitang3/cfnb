@@ -135,8 +135,11 @@
     "FORCE_DIRECT": false,
     "_comment_FORCE_DIRECT": "是否强制所有网络请求直连（true=清除系统代理，全部直连）",
 
+    "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    "_comment_USER_AGENT": "全局 User-Agent，用于反代验证探针、数据源拉取、IP 风险查询、微信通知、DNS API、带宽测速等所有出站请求",
+
     "TEST_AVAILABILITY": true,
-    "_comment_TEST_AVAILABILITY": "是否对候选节点进行反代验证（验证是否为反代 CF 的 ProxyIP）",
+    "_comment_TEST_AVAILABILITY": "是否对候选节点进行反代验证（验证是否为反代 CF 的 ProxyIP，同时采集首字节延迟/抖动）",
 
     "PROBE_HOST": "cloudflare-ech.com",
     "_comment_PROBE_HOST": "反代验证的探针域名（默认 cloudflare-ech.com，可换成你自己的域名）",
@@ -166,43 +169,16 @@
     "_comment_AVAILABILITY_INNER_RETRY_DELAY": "反代验证单节点内部重试间隔（秒）",
 
     "AVAILABILITY_TEST_ROUNDS": 3,
-    "_comment_AVAILABILITY_TEST_ROUNDS": "反代验证外层轮数（每轮必须拿到一次合规响应，全部轮成功才通过）",
+    "_comment_AVAILABILITY_TEST_ROUNDS": "反代验证外层轮数（每轮必须拿到一次合规响应，全部轮成功才通过；同时决定延迟/抖动样本数）",
 
-    "HTTP_TEST_ENABLED": true,
-    "_comment_HTTP_TEST_ENABLED": "是否在反代验证后开启边缘验证（过滤 HTTP 响应头非 Cloudflare 的节点）",
-
-    "HTTP_TEST_TIMEOUT": 3,
-    "_comment_HTTP_TEST_TIMEOUT": "单次边缘验证读取超时（秒）",
-
-    "HTTP_TEST_CONNECT_TIMEOUT": 3,
-    "_comment_HTTP_TEST_CONNECT_TIMEOUT": "边缘验证的连接超时（秒）",
-
-    "HTTP_TEST_MAX_ROUNDS": 3,
-    "_comment_HTTP_TEST_MAX_ROUNDS": "边缘验证整体失败（通过率为0）时的最大重试轮数",
-
-    "HTTP_TEST_ROUND_DELAY": 3,
-    "_comment_HTTP_TEST_ROUND_DELAY": "边缘验证整体重试间隔（秒）",
-
-    "HTTP_TEST_INNER_RETRY_ENABLED": true,
-    "_comment_HTTP_TEST_INNER_RETRY_ENABLED": "边缘验证是否启用单节点内部重试",
-
-    "HTTP_TEST_MAX_RETRIES": 3,
-    "_comment_HTTP_TEST_MAX_RETRIES": "单次边缘验证超时后的最大重试次数",
-
-    "HTTP_TEST_RETRY_DELAY": 3,
-    "_comment_HTTP_TEST_RETRY_DELAY": "单次边缘验证重试间隔（秒）",
-
-    "HTTP_TEST_METHOD": "HEAD",
-    "_comment_HTTP_TEST_METHOD": "边缘验证请求方法（GET 或 HEAD）",
+    "HTTP_LATENCY_ENABLED": false,
+    "_comment_HTTP_LATENCY_ENABLED": "延迟/抖动排序开关（true=反代验证采集的首字节延迟/抖动参与综合排序；false=不参与，排序退化为纯带宽）",
 
     "HTTP_LATENCY_WEIGHT": 3.0,
-    "_comment_HTTP_LATENCY_WEIGHT": "边缘验证延迟在综合排序中的权重（越大越排斥高延迟）",
+    "_comment_HTTP_LATENCY_WEIGHT": "首字节延迟在综合排序中的权重（越大越排斥高延迟）",
 
     "JITTER_WEIGHT": 3.0,
-    "_comment_JITTER_WEIGHT": "边缘验证延迟抖动（标准差）在综合排序中的权重（越大越排斥延迟波动大的节点）",
-
-    "HTTP_JITTER_SAMPLES": 3,
-    "_comment_HTTP_JITTER_SAMPLES": "边缘验证延迟抖动测试次数（至少3次，建议3~5次，越大越准但越慢）",
+    "_comment_JITTER_WEIGHT": "首字节延迟抖动（标准差）在综合排序中的权重（越大越排斥延迟波动大的节点）",
 
     "OUTPUT_FILTER_COUNTRIES_ENABLED": false,
     "_comment_OUTPUT_FILTER_COUNTRIES_ENABLED": "【仅 ip.txt】输出白名单开关（true=仅保留下方 OUTPUT_ALLOWED_COUNTRIES 中的国家，其余剔除，过滤后为空则降级使用未过滤列表）",
@@ -266,13 +242,10 @@
     "_comment_MAX_WORKERS": "TCP 并发测试的最大线程数",
 
     "AVAILABILITY_WORKERS": 300,
-    "_comment_AVAILABILITY_WORKERS": "反代验证的并发线程数",
+    "_comment_AVAILABILITY_WORKERS": "反代验证的并发线程数（开启延迟排序时建议降到 32~50，避免并发排队污染延迟样本）",
 
     "FALLBACK_WORKERS": 300,
     "_comment_FALLBACK_WORKERS": "备用国家查询的并发线程数（当标签无法识别时通过反代验证查询）",
-
-    "HTTP_TEST_WORKERS": 300,
-    "_comment_HTTP_TEST_WORKERS": "边缘验证的并发线程数",
 
     "BANDWIDTH_WORKERS": 3,
     "_comment_BANDWIDTH_WORKERS": "带宽测速的并发线程数",
@@ -311,10 +284,10 @@
     "_comment_IP_TXT_SHOW_BANDWIDTH": "ip.txt 中是否附带带宽测速信息（如 5.20 Mbps）",
 
     "IP_TXT_SHOW_HTTP_LATENCY": false,
-    "_comment_IP_TXT_SHOW_HTTP_LATENCY": "ip.txt 中是否附带边缘验证延迟信息（如 30.00 ms）",
+    "_comment_IP_TXT_SHOW_HTTP_LATENCY": "ip.txt 中是否附带首字节延迟信息（如 30.00 ms）",
 
     "IP_TXT_SHOW_HTTP_JITTER": false,
-    "_comment_IP_TXT_SHOW_HTTP_JITTER": "ip.txt 中是否附带边缘验证抖动信息（如 2.50 ms）",
+    "_comment_IP_TXT_SHOW_HTTP_JITTER": "ip.txt 中是否附带首字节抖动信息（如 2.50 ms）",
 
     "IP_TXT_SHOW_LATENCY": false,
     "_comment_IP_TXT_SHOW_LATENCY": "ip.txt 中是否附带 TCP 延迟信息（如 50.30 ms）"
