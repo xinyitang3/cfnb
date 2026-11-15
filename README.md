@@ -9,7 +9,7 @@
 
 > ⭐ **如果觉得好用，点个 Star 支持一下～**
 
-这是一个全自动的 **Cloudflare CDN 节点优选工具**。它通过 **TCP 延迟筛选** + **反代验证** + **HTTP 延迟及抖动检测** + **真实带宽测速** 多重机制，从多个公开数据源中聚合节点，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），筛选出当前网络环境下速度最快、延迟最低、抖动最小的 Cloudflare IP，并支持**自动更新至 Cloudflare DNS** 以及**同步至 GitHub 仓库**，同时支持微信实时通知。
+这是一个全自动的 **Cloudflare CDN 节点优选工具**。它通过 **TCP 延迟筛选** + **反代验证（含延迟/抖动采集）** + **真实带宽测速** 多重机制，从多个公开数据源中聚合节点，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），筛选出当前网络环境下速度最快、延迟最低、抖动最小的 Cloudflare IP，并支持**自动更新至 Cloudflare DNS** 以及**同步至 GitHub 仓库**，同时支持微信实时通知。
 
 > [!IMPORTANT]
 > **跨平台支持**：本工具同时兼容 **Windows** 和 **Linux** 操作系统。
@@ -37,7 +37,7 @@
 | 🌐 **多模式筛选** | 全局最优 TopN / 分国家最优 TopN |
 | ⚡ **TCP 连接测试** | 并发测延迟，可设成功率阈值 |
 | 🔍 **反代验证** | 直连探针验证节点是否真能作为 ProxyIP 转发 |
-| 🔍 **HTTP 延迟与抖动检测** | 多次探测 HTTP 响应，延迟取采样最大值、抖动取标准差，提升代理兼容性 |
+| 🔍 **HTTP 延迟与抖动检测** | 反代验证探针中采集首字节延迟与抖动，延迟取采样最大值、抖动取标准差，参与综合排序 |
 | 📶 **真实带宽测速** | curl 下载测速，实测吞吐量 |
 | ⚖️ **综合加权排序** | 同时考虑带宽、TCP 延迟、HTTP 延迟与抖动，四个权重可自由调整，选出综合体验最优的节点 |
 | 🧩 **多源自适应聚合** | 支持多个数据源，自动识别并解析任意格式（标准代码、中文名、emoji国旗、JSON等），统一转换为标准格式 |
@@ -80,7 +80,7 @@
 
 - **操作系统**：Windows 10+ / Windows Server 2016+ 或 Linux（Ubuntu/Debian/CentOS 等）
 - **必备软件**：
-  - **Python 3.7+**
+  - **Python 3.8+**
   - **Git**
   - **curl**（需在系统 PATH 中可用）
 - **Python 依赖**：`requests`, `aiohttp`, `brotlicffi`
@@ -252,7 +252,7 @@ python3 main.py
 ## ⚙️ 配置说明（完整参数详解）
 
 > [!NOTE]
-> 默认参数基于 **2核2G 云服务器** 测试通过。若在 **软路由、树莓派或低配 PC** 上运行，建议适当降低 `MAX_WORKERS`、`HTTP_TEST_WORKERS`、`BANDWIDTH_WORKERS`。
+> 默认参数基于 **2核2G 云服务器** 测试通过。若在 **软路由、树莓派或低配 PC** 上运行，建议适当降低 `MAX_WORKERS`、`BANDWIDTH_WORKERS`。
 
 所有参数均位于 `config.json`，以下为逐项说明。
 
@@ -286,7 +286,6 @@ python3 main.py
 | :--- | :--- | :--- | :--- |
 | `HTTP_LATENCY_WEIGHT` | `float` | `3.0` | HTTP延迟在综合排序中的权重（越大越排斥高HTTP延迟） |
 | `JITTER_WEIGHT` | `float` | `3.0` | HTTP延迟抖动（标准差）在综合排序中的权重（越大越排斥延迟波动大的节点） |
-| `HTTP_JITTER_SAMPLES` | `int` | `3` | HTTP 检测外层轮数（同时决定延迟/抖动样本数） |
 | `SPEED_WEIGHT` | `float` | `3.0` | 带宽在综合排序中的权重（越大越看重带宽） |
 
 ### 前置过滤参数（TCP 测试前生效）
@@ -401,7 +400,7 @@ python3 main.py
 > 程序会自动校验 Token 有效性并显示进度，当所有 Token 均触发速率限制时，会通过微信通知。
 
 <details>
-<summary>🔧 高级参数（反代验证 / HTTP 检测 / 带宽 / 并发 / 重试 / 广告 / 输出）</summary>
+<summary>🔧 高级参数（反代验证 / HTTP 延迟 / 带宽 / 并发 / 重试 / 广告 / 输出）</summary>
 
 **反代验证参数**
 
@@ -421,22 +420,14 @@ python3 main.py
 
 > 💡 IPv6 栈标签：反代验证阶段仅通过探针返回的 `ip` 字段打 `ipv4_only` / `ipv6_only` / `dual_stack` 标签，**不淘汰任何节点**；真正淘汰 `ipv6_only` 在 DNS 更新环节，受 `FILTER_IPV6_AVAILABILITY` 开关控制。
 
-**HTTP 检测参数**
+**HTTP 延迟参数**
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `HTTP_LATENCY_ENABLED` | `boolean` | `false` | HTTP 延迟/抖动采集开关（true=采集参与排序；false=不采集，排序退化为带宽+TCP延迟） |
-| `HTTP_TEST_TIMEOUT` | `int` | `3` | 单次 HTTP 检测读取超时（秒） |
-| `HTTP_TEST_CONNECT_TIMEOUT` | `int` | `3` | HTTP 检测的连接超时（秒），与读取超时分离 |
-| `HTTP_TEST_INNER_RETRY_ENABLED` | `boolean` | `true` | HTTP 检测是否启用单节点内部重试 |
-| `HTTP_TEST_MAX_RETRIES` | `int` | `3` | 单次 HTTP 检测超时后的最大重试次数 |
-| `HTTP_TEST_RETRY_DELAY` | `int` | `3` | 单次 HTTP 检测重试间隔（秒） |
-| `HTTP_TEST_MAX_ROUNDS` | `int` | `3` | HTTP 检测整体失败（通过率为0）时的最大重试轮数 |
-| `HTTP_TEST_ROUND_DELAY` | `int` | `3` | HTTP 检测整体重试间隔（秒） |
-| `HTTP_TEST_METHOD` | `string` | `"HEAD"` | HTTP 检测请求方法（`GET` 或 `HEAD`） |
 
-> 💡 HTTP 检测在反代验证之后、带宽测速之前执行，仅采集 HTTP 延迟/抖动，不判状态码。  
-> 💡 `HTTP_LATENCY_ENABLED=false` 时整个阶段跳过，`http_latency_map`/`http_jitter_map` 为空，排序退化为带宽（`TCP_LATENCY_WEIGHT` 默认 0 时纯带宽）。
+> 💡 HTTP 延迟/抖动在反代验证阶段采集，复用探针的 `elapsed_ms`，不单独发请求、不判状态码。  
+> 💡 `HTTP_LATENCY_ENABLED=false` 时不参与排序，`http_latency_map`/`http_jitter_map` 为空，排序退化为带宽（`TCP_LATENCY_WEIGHT` 默认 0 时纯带宽）。
 
 **带宽测速参数**
 
@@ -458,7 +449,6 @@ python3 main.py
 | `MAX_WORKERS` | `int` | `300` | TCP 并发测试最大线程数 |
 | `AVAILABILITY_WORKERS` | `int` | `300` | 反代验证并发数 |
 | `FALLBACK_WORKERS` | `int` | `300` | 备用国家查询的并发线程数（当标签无法识别时通过反代验证查询） |
-| `HTTP_TEST_WORKERS` | `int` | `300` | HTTP 检测并发线程数 |
 | `BANDWIDTH_WORKERS` | `int` | `3` | 带宽测速并发数 |
 | `IP_RISK_WORKERS` | `int` | `300` | IP 风险查询的并发线程数 |
 
@@ -470,7 +460,7 @@ python3 main.py
 | `DNS_UPDATE_RETRY_DELAY` | `int` | `3` | DNS 更新重试间隔（秒） |
 | `GITHUB_SYNC_MAX_RETRIES` | `int` | `3` | GitHub 推送最大重试次数 |
 | `GITHUB_SYNC_RETRY_DELAY` | `int` | `3` | GitHub 推送重试间隔（秒） |
-| `GIT_SYNC_PROCESS_TIMEOUT` | `int` | `180` | Git 同步子进程最大运行时间（秒） |
+| `GIT_SYNC_PROCESS_TIMEOUT` | `int` | `60` | Git 同步子进程最大运行时间（秒） |
 
 #### 广告植入参数
 
@@ -779,7 +769,6 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 | :--- | :--- | :--- |
 | TCP 延迟测试 (Socket) | ❌ 直连 | 反映本机到节点的 RTT |
 | 反代验证 (`requests`) | ❌ 直连 | 验证节点能否作为 ProxyIP 转发 |
-| HTTP 检测 (requests) | ❌ 直连 | 采集 HTTP 延迟/抖动 |
 | 带宽测速 (curl) | ❌ 直连 | 反映本机到 CDN 的速度 |
 | API 请求类 (requests) | ✅ 跟随系统代理 | 获取节点、IP 风险查询、微信通知等 |
 | Git 推送 (git) | ✅ 跟随系统代理 | 涉及 `github.com` 等 |
@@ -855,12 +844,9 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 若所有节点的 TCP 连接成功率均低于 `MIN_SUCCESS_RATE`，程序将直接退出并提示检查网络或降低成功率阈值。此为第一道硬性门槛，无回退机制。
 
 12. **反代验证全部失败**  
-若多轮重试后仍无节点通过反代验证，程序将跳过该过滤，直接使用 TCP 候选池继续后续 HTTP 检测与带宽测速，并发送微信通知（如已启用）。
+若多轮重试后仍无节点通过反代验证，程序将跳过该过滤，直接使用 TCP 候选池继续带宽测速，并发送微信通知（如已启用）。
 
-13. **HTTP 检测全部失败**  
-若所有候选节点 HTTP 检测均超时或连接失败，程序将降级使用反代验证通过的列表继续带宽测速，并发送微信通知（如已启用）。
-
-14. **带宽测速全部失败**  
+13. **带宽测速全部失败**  
 若 curl 测速多次重试仍无有效带宽数据，程序将回退到 TCP 延迟排序结果作为最终优选节点，并发送微信通知（如已启用）。
 
 </details>
@@ -868,15 +854,15 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 <details>
 <summary>🗺️ IP 地区校准</summary>
 
-15. **IP 地区校准是做什么的？**  
+14. **IP 地区校准是做什么的？**  
     - 程序会通过 ipinfo.io 查询每个节点 IP 的真实国家代码、城市和 ISP，并缓存到 `ipinfo_cache.txt`。
     - 校准后节点标签只保留国家代码（如 `#HK`），不影响原有筛选逻辑。
 
-16. **校准速度很慢怎么办？**  
+15. **校准速度很慢怎么办？**  
     - 可适当降低 `IP_CALIBRATION_CONCURRENCY`（如 100），或增加 `IP_CALIBRATION_MIN_INTERVAL`（如 0.15）。
     - 若不需要校准，将 `IP_CALIBRATION_ENABLED` 设为 `false` 即可跳过。
 
-17. **收到"token可能已耗尽"的微信通知？**  
+16. **收到"token可能已耗尽"的微信通知？**  
     - 只有所有 Token 都触发 ipinfo.io 的速率限制（429）时才会发送此通知，单个 Token 被限速会自动切换，不影响查询。
     - 可在 [ipinfo.io](https://ipinfo.io/) 申请更多免费 Token 放入 `valid_tokens.txt`。
 
@@ -885,7 +871,7 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 <details>
 <summary>🔒 隐私与其他</summary>
 
-18. **隐私保护**  
+17. **隐私保护**  
    自动生成的 `.gitignore` 文件会忽略 `config.json`、`git_sync.ps1` 和 `git_sync.sh`，防止敏感信息被提交到公开仓库。
 
 </details>

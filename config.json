@@ -239,26 +239,26 @@
     "_comment_IP_CALIBRATION_CONCURRENCY": "地区校准的并发查询数（根据 token 数量调整）",
 
     "MAX_WORKERS": 300,
-    "_comment_MAX_WORKERS": "TCP 并发测试的最大线程数",
+    "_comment_MAX_WORKERS": "TCP 并发测试的最大协程数",
 
     "AVAILABILITY_WORKERS": 300,
-    "_comment_AVAILABILITY_WORKERS": "反代验证的并发线程数（开启延迟排序时建议降到 32~50，避免并发排队污染延迟样本）",
+    "_comment_AVAILABILITY_WORKERS": "反代验证的并发协程数（开启延迟排序时建议降到 32~50，避免并发排队污染延迟样本）",
 
     "FALLBACK_WORKERS": 300,
-    "_comment_FALLBACK_WORKERS": "备用国家查询的并发线程数（当标签无法识别时通过反代验证查询）",
+    "_comment_FALLBACK_WORKERS": "备用国家查询的并发协程数（当标签无法识别时通过反代验证查询）",
 
     "BANDWIDTH_WORKERS": 3,
-    "_comment_BANDWIDTH_WORKERS": "带宽测速的并发线程数",
+    "_comment_BANDWIDTH_WORKERS": "带宽测速的并发协程数",
 
     "IP_RISK_WORKERS": 300,
-    "_comment_IP_RISK_WORKERS": "IP 风险查询的并发线程数",
+    "_comment_IP_RISK_WORKERS": "IP 风险查询的并发协程数",
 
     "_comment_retry": "重试策略配置",
     "DNS_UPDATE_MAX_RETRIES": 3,
     "DNS_UPDATE_RETRY_DELAY": 3,
     "GITHUB_SYNC_MAX_RETRIES": 3,
     "GITHUB_SYNC_RETRY_DELAY": 3,
-    "GIT_SYNC_PROCESS_TIMEOUT": 180,
+    "GIT_SYNC_PROCESS_TIMEOUT": 60,
     "_comment_GIT_SYNC_PROCESS_TIMEOUT": "Git 同步子进程最大运行时间（秒）",
 
     "_comment_AD": "ip.txt 广告植入（开关独立）",

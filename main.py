@@ -13,14 +13,11 @@ import aiohttp
 import ipaddress
 import warnings
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from urllib3.exceptions import InsecureRequestWarning
-from requests.adapters import HTTPAdapter
-from urllib3.connection import HTTPSConnection
 
 if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
@@ -32,6 +29,21 @@ def _new_session_request(self, method, url, *args, **kwargs):
     return _original_session_request(self, method, url, *args, **kwargs)
 
 requests.Session.request = _new_session_request
+
+_original_unraisablehook = sys.unraisablehook
+
+def _ignore_proactor_loop_closed(unraisable):
+    obj = unraisable.object
+    if (
+        unraisable.exc_type is RuntimeError
+        and str(unraisable.exc_value) == "Event loop is closed"
+        and getattr(obj, "__module__", None) == "asyncio.proactor_events"
+        and getattr(obj, "__qualname__", None) == "_ProactorBasePipeTransport.__del__"
+    ):
+        return
+    _original_unraisablehook(unraisable)
+
+sys.unraisablehook = _ignore_proactor_loop_closed
 
 _IS_TTY = hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
 _last_progress_len = 0
@@ -52,6 +64,9 @@ def log(level, msg, end="\n"):
         pad = max(0, _last_progress_len - len(line))
         print(f"\r{line}{' ' * pad}", end="", flush=True)
         _last_progress_len = len(line)
+
+def _run_async(coro):
+    return asyncio.run(coro)
 
 NODE_PATTERN = re.compile(r"^(\d+\.\d+\.\d+\.\d+):(\d+)#(.+)$")
 IP_PORT_PATTERN = re.compile(r"^(\d+\.\d+\.\d+\.\d+):(\d+)#")
@@ -182,121 +197,69 @@ ALPHA3_TO_ALPHA2 = {
 }
 
 CODE_SET = set(CN_TO_CODE.values())
-
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
 
 def load_config():
     defaults = {
-        "USE_GLOBAL_MODE": True,
-        "GLOBAL_TOP_N": 15,
-        "PER_COUNTRY_TOP_N": 1,
-        "BANDWIDTH_CANDIDATES": 300,
-        "TCP_PROBES": 1,
-        "MIN_SUCCESS_RATE": 1.0,
-        "TCP_LATENCY_WEIGHT": 0.0,
-        "TIMEOUT": 3.0,
-        "SOCKET_DEFAULT_TIMEOUT": 3,
-        "PROGRESS_PRINT_INTERVAL": 1,
-        "FILTER_COUNTRIES_ENABLED": False,
-        "ALLOWED_COUNTRIES": ["HK"],
-        "PRE_FILTER_BLOCKED_ENABLED": True,
-        "PRE_FILTER_BLOCKED_COUNTRIES": ["CN"],
-        "PRE_FILTER_PORT_ENABLED": True,
-        "PRE_FILTER_PORTS": [443],
-        "ENABLE_WXPUSHER": True,
+        "USE_GLOBAL_MODE": True, "GLOBAL_TOP_N": 15, "PER_COUNTRY_TOP_N": 1,
+        "BANDWIDTH_CANDIDATES": 300, "TCP_PROBES": 1, "MIN_SUCCESS_RATE": 1.0,
+        "TCP_LATENCY_WEIGHT": 0.0, "TIMEOUT": 3.0, "SOCKET_DEFAULT_TIMEOUT": 3,
+        "PROGRESS_PRINT_INTERVAL": 1, "FILTER_COUNTRIES_ENABLED": False,
+        "ALLOWED_COUNTRIES": ["HK"], "PRE_FILTER_BLOCKED_ENABLED": True,
+        "PRE_FILTER_BLOCKED_COUNTRIES": ["CN"], "PRE_FILTER_PORT_ENABLED": True,
+        "PRE_FILTER_PORTS": [443], "ENABLE_WXPUSHER": True,
         "WXPUSHER_APP_TOKEN": "your_app_token_here",
         "WXPUSHER_UIDS": ["your_uid_here"],
         "WXPUSHER_API_URL": "https://wxpusher.zjiecode.com/api/send/message",
-        "NOTIFY_TIMEOUT": 3,
-        "NOTIFY_CONNECT_TIMEOUT": 3,
-        "CF_ENABLED": True,
-        "CF_API_TOKEN": "your_CF_API_TOKEN",
-        "CF_ZONE_ID": "your_CF_ZONE_ID",
-        "CF_DNS_RECORD_NAME": "your_CF_DNS_RECORD_NAME",
-        "CF_TTL": 60,
-        "CF_PROXIED": False,
-        "CF_DNS_CONNECT_TIMEOUT": 3,
-        "CF_DNS_READ_TIMEOUT": 3,
+        "NOTIFY_TIMEOUT": 3, "NOTIFY_CONNECT_TIMEOUT": 3, "CF_ENABLED": True,
+        "CF_API_TOKEN": "your_CF_API_TOKEN", "CF_ZONE_ID": "your_CF_ZONE_ID",
+        "CF_DNS_RECORD_NAME": "your_CF_DNS_RECORD_NAME", "CF_TTL": 60,
+        "CF_PROXIED": False, "CF_DNS_CONNECT_TIMEOUT": 3, "CF_DNS_READ_TIMEOUT": 3,
         "DNS_RECORD_TYPE": "TXT",
         "ADDITIONAL_SOURCES": [
             {"url": "https://zip.cm.edu.kg/all.txt", "enabled": True},
             {"url": "https://countrymerge.pages.dev/all.txt", "enabled": True}
         ],
-        "FETCH_MAX_RETRIES": 3,
-        "FETCH_RETRY_DELAY": 3,
-        "FETCH_TIMEOUT": 3,
-        "FETCH_CONNECT_TIMEOUT": 3,
-        "IP_CALIBRATION_ENABLED": False,
-        "TOKEN_FAILURE_THRESHOLD": 3,
-        "IP_CALIBRATION_MIN_INTERVAL": 0.1,
+        "FETCH_MAX_RETRIES": 3, "FETCH_RETRY_DELAY": 3, "FETCH_TIMEOUT": 3,
+        "FETCH_CONNECT_TIMEOUT": 3, "IP_CALIBRATION_ENABLED": False,
+        "TOKEN_FAILURE_THRESHOLD": 3, "IP_CALIBRATION_MIN_INTERVAL": 0.1,
         "IP_CALIBRATION_REQUEST_TIMEOUT": 3,
         "IP_CALIBRATION_TOKEN_FILE": "valid_tokens.txt",
         "IP_CALIBRATION_CACHE_FILE": "ipinfo_cache.txt",
-        "OUTPUT_FILE": "ip.txt",
-        "ENABLE_LOGGING": False,
-        "LOG_FILE": "cfnb.log",
-        "FORCE_DIRECT": False,
-        "USER_AGENT": DEFAULT_UA,
-        "TEST_AVAILABILITY": True,
-        "PROBE_HOST": "cloudflare-ech.com",
-        "PROBE_PATH": "/cdn-cgi/trace",
-        "AVAILABILITY_TIMEOUT": 3,
-        "AVAILABILITY_CONNECT_TIMEOUT": 3,
-        "AVAILABILITY_RETRY_MAX": 3,
-        "AVAILABILITY_RETRY_DELAY": 3,
-        "AVAILABILITY_INNER_RETRY_ENABLED": True,
-        "AVAILABILITY_INNER_RETRY_MAX": 3,
-        "AVAILABILITY_INNER_RETRY_DELAY": 3,
-        "AVAILABILITY_TEST_ROUNDS": 3,
-        "HTTP_LATENCY_ENABLED": False,
-        "HTTP_LATENCY_WEIGHT": 3.0,
-        "JITTER_WEIGHT": 3.0,
-        "OUTPUT_FILTER_COUNTRIES_ENABLED": False,
-        "OUTPUT_ALLOWED_COUNTRIES": ["HK"],
-        "FILTER_IPV6_AVAILABILITY": True,
+        "OUTPUT_FILE": "ip.txt", "ENABLE_LOGGING": False, "LOG_FILE": "cfnb.log",
+        "FORCE_DIRECT": False, "USER_AGENT": DEFAULT_UA, "TEST_AVAILABILITY": True,
+        "PROBE_HOST": "cloudflare-ech.com", "PROBE_PATH": "/cdn-cgi/trace",
+        "AVAILABILITY_TIMEOUT": 3, "AVAILABILITY_CONNECT_TIMEOUT": 3,
+        "AVAILABILITY_RETRY_MAX": 3, "AVAILABILITY_RETRY_DELAY": 3,
+        "AVAILABILITY_INNER_RETRY_ENABLED": True, "AVAILABILITY_INNER_RETRY_MAX": 3,
+        "AVAILABILITY_INNER_RETRY_DELAY": 3, "AVAILABILITY_TEST_ROUNDS": 3,
+        "HTTP_LATENCY_ENABLED": False, "HTTP_LATENCY_WEIGHT": 3.0,
+        "JITTER_WEIGHT": 3.0, "OUTPUT_FILTER_COUNTRIES_ENABLED": False,
+        "OUTPUT_ALLOWED_COUNTRIES": ["HK"], "FILTER_IPV6_AVAILABILITY": True,
         "FILTER_BLOCKED_COUNTRIES_ENABLED": True,
         "BLOCKED_COUNTRIES": [
             "BD", "BI", "BY", "CD", "CF", "CN", "CU", "DE", "ET", "HK",
             "IR", "KP", "LY", "MO", "NG", "NL", "PK", "RU", "SD", "SO",
             "SY", "TH", "TW", "UA", "VE", "VN", "YE", "ZW"
         ],
-        "DNS_IP_RISK_FILTER_ENABLED": False,
-        "DNS_IP_RISK_MAX_LEVEL": "高风险",
-        "IP_RISK_TIMEOUT": 3,
-        "DNS_UPDATE_TARGET_COUNT": 15,
-        "BANDWIDTH_SIZE_MB": 1.0,
-        "BANDWIDTH_TIMEOUT": 3,
-        "BANDWIDTH_RETRY_MAX": 3,
+        "DNS_IP_RISK_FILTER_ENABLED": False, "DNS_IP_RISK_MAX_LEVEL": "高风险",
+        "IP_RISK_TIMEOUT": 3, "DNS_UPDATE_TARGET_COUNT": 15,
+        "BANDWIDTH_SIZE_MB": 1.0, "BANDWIDTH_TIMEOUT": 3, "BANDWIDTH_RETRY_MAX": 3,
         "BANDWIDTH_RETRY_DELAY": 3,
         "BANDWIDTH_URL_TEMPLATE": "{scheme}://speed.cloudflare.com:{port}/__down?bytes={bytes}",
-        "BANDWIDTH_PROCESS_BUFFER": 3,
-        "BANDWIDTH_CONNECT_TIMEOUT": 3,
-        "SPEED_WEIGHT": 3.0,
-        "IP_CALIBRATION_CONCURRENCY": 300,
-        "MAX_WORKERS": 300,
-        "AVAILABILITY_WORKERS": 300,
-        "FALLBACK_WORKERS": 300,
-        "BANDWIDTH_WORKERS": 3,
-        "IP_RISK_WORKERS": 300,
-        "DNS_UPDATE_MAX_RETRIES": 3,
-        "DNS_UPDATE_RETRY_DELAY": 3,
-        "GITHUB_SYNC_MAX_RETRIES": 3,
-        "GITHUB_SYNC_RETRY_DELAY": 3,
-        "GIT_SYNC_PROCESS_TIMEOUT": 180,
-        "AD_HEADER_ENABLED": False,
-        "AD_HEADER_LINES": [],
-        "AD_FOOTER_ENABLED": False,
-        "AD_FOOTER_LINES": [],
-        "AD_PERLINE_ENABLED": False,
-        "AD_PERLINE_TEXT": "",
-        "IP_TXT_SHOW_BANDWIDTH": False,
-        "IP_TXT_SHOW_HTTP_LATENCY": False,
-        "IP_TXT_SHOW_HTTP_JITTER": False,
-        "IP_TXT_SHOW_LATENCY": False,
+        "BANDWIDTH_PROCESS_BUFFER": 3, "BANDWIDTH_CONNECT_TIMEOUT": 3,
+        "SPEED_WEIGHT": 3.0, "IP_CALIBRATION_CONCURRENCY": 300,
+        "MAX_WORKERS": 300, "AVAILABILITY_WORKERS": 300, "FALLBACK_WORKERS": 300,
+        "BANDWIDTH_WORKERS": 3, "IP_RISK_WORKERS": 300,
+        "DNS_UPDATE_MAX_RETRIES": 3, "DNS_UPDATE_RETRY_DELAY": 3,
+        "GITHUB_SYNC_MAX_RETRIES": 3, "GITHUB_SYNC_RETRY_DELAY": 3,
+        "GIT_SYNC_PROCESS_TIMEOUT": 60, "AD_HEADER_ENABLED": False,
+        "AD_HEADER_LINES": [], "AD_FOOTER_ENABLED": False, "AD_FOOTER_LINES": [],
+        "AD_PERLINE_ENABLED": False, "AD_PERLINE_TEXT": "",
+        "IP_TXT_SHOW_BANDWIDTH": False, "IP_TXT_SHOW_HTTP_LATENCY": False,
+        "IP_TXT_SHOW_HTTP_JITTER": False, "IP_TXT_SHOW_LATENCY": False,
     }
-
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = json.load(f)
@@ -306,13 +269,11 @@ def load_config():
     except json.JSONDecodeError as e:
         log("错误", f"配置文件格式不正确 - {e}")
         sys.exit(1)
-
     missing = [k for k in defaults if k not in config]
     if missing:
         for k in missing:
             config[k] = defaults[k]
         log("警告", f"配置缺失 {len(missing)} 项：{', '.join(missing)}")
-
     return config
 
 cfg = load_config()
@@ -423,56 +384,6 @@ if FORCE_DIRECT:
 
 socket.setdefaulttimeout(SOCKET_DEFAULT_TIMEOUT)
 
-class _PinnedHTTPSConnection(HTTPSConnection):
-    pinned_ip = None
-    pinned_port = 443
-
-    def _new_conn(self):
-        from urllib3.util.connection import create_connection
-        timeout = self.timeout
-        if hasattr(timeout, "connect_timeout"):
-            timeout = timeout.connect_timeout
-        return create_connection(
-            (self.pinned_ip, self.pinned_port),
-            timeout,
-            getattr(self, "source_address", None),
-            getattr(self, "socket_options", None),
-        )
-
-class PinnedAdapter(HTTPAdapter):
-    def __init__(self, pinned_ip, pinned_port=443, **kwargs):
-        self.pinned_ip = pinned_ip
-        self.pinned_port = pinned_port
-        super().__init__(**kwargs)
-
-    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
-        from urllib3.poolmanager import PoolManager
-        from urllib3.connectionpool import HTTPSConnectionPool
-        tag = f"{self.pinned_ip}_{self.pinned_port}".replace(".", "_").replace(":", "_")
-        conn_cls = type(
-            f"PinnedConn_{tag}",
-            (_PinnedHTTPSConnection,),
-            {"pinned_ip": self.pinned_ip, "pinned_port": self.pinned_port},
-        )
-        pool_cls = type(
-            f"PinnedPool_{tag}",
-            (HTTPSConnectionPool,),
-            {"ConnectionCls": conn_cls},
-        )
-
-        class _Manager(PoolManager):
-            def __init__(self, *a, **kw):
-                super().__init__(*a, **kw)
-                self.pool_classes_by_scheme = dict(self.pool_classes_by_scheme)
-                self.pool_classes_by_scheme["https"] = pool_cls
-
-        self.poolmanager = _Manager(
-            num_pools=connections,
-            maxsize=maxsize,
-            block=block,
-            **pool_kwargs,
-        )
-
 def _parse_trace_text(text):
     out = {}
     for line in text.splitlines():
@@ -482,33 +393,46 @@ def _parse_trace_text(text):
             out[k.strip()] = v.strip()
     return out
 
-def _local_probe(ip, port, timeout):
-    s = requests.Session()
-    s.trust_env = False
-    adapter = PinnedAdapter(ip, port)
-    s.mount(f"https://{PROBE_HOST}", adapter)
+class PinnedResolver(aiohttp.abc.AbstractResolver):
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+    async def resolve(self, host, port=0, family=socket.AF_INET):
+        return [{"hostname": host, "host": self.ip, "port": self.port,
+                 "family": socket.AF_INET, "proto": 0, "flags": 0}]
+    async def close(self):
+        pass
+
+class MutablePinnedResolver(aiohttp.abc.AbstractResolver):
+    def __init__(self):
+        self.ip = None
+        self.port = None
+    def set_target(self, ip, port):
+        self.ip = ip
+        self.port = port
+    async def resolve(self, host, port=0, family=socket.AF_INET):
+        return [{"hostname": host, "host": self.ip, "port": self.port,
+                 "family": socket.AF_INET, "proto": 0, "flags": 0}]
+    async def close(self):
+        pass
+
+async def _local_probe_async(session, timeout):
     try:
         start = time.time()
-        r = s.get(
+        async with session.get(
             f"https://{PROBE_HOST}{PROBE_PATH}",
-            timeout=(AVAILABILITY_CONNECT_TIMEOUT, timeout),
+            timeout=aiohttp.ClientTimeout(total=None, connect=AVAILABILITY_CONNECT_TIMEOUT,
+                                          sock_connect=AVAILABILITY_CONNECT_TIMEOUT, sock_read=timeout),
             allow_redirects=False,
-            headers={"User-Agent": USER_AGENT},
-        )
-        elapsed_ms = (time.time() - start) * 1000
-        trace = _parse_trace_text(r.text) if r.status_code == 200 else {}
-        return {
-            "status": r.status_code,
-            "headers": r.headers,
-            "trace": trace,
-            "ua": r.request.headers.get("User-Agent", ""),
-            "error": None,
-            "elapsed_ms": elapsed_ms,
-        }
-    except requests.exceptions.RequestException as e:
+        ) as r:
+            text = await r.text()
+            elapsed_ms = (time.time() - start) * 1000
+            trace = _parse_trace_text(text) if r.status == 200 else {}
+            return {"status": r.status, "headers": r.headers, "trace": trace,
+                    "ua": r.request_info.headers.get("User-Agent", "") or "",
+                    "error": None, "elapsed_ms": elapsed_ms}
+    except Exception as e:
         return {"status": None, "headers": {}, "trace": {}, "ua": "", "error": str(e), "elapsed_ms": None}
-    finally:
-        s.close()
 
 _LOCK_FILE_HANDLE = None
 _LOCK_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".run.lock")
@@ -527,10 +451,8 @@ def acquire_single_instance():
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except (OSError, IOError):
         if f is not None:
-            try:
-                f.close()
-            except Exception:
-                pass
+            try: f.close()
+            except Exception: pass
         return False
     _LOCK_FILE_HANDLE = f
     return True
@@ -549,33 +471,20 @@ def release_single_instance():
             fcntl.flock(_LOCK_FILE_HANDLE.fileno(), fcntl.LOCK_UN)
     except Exception:
         pass
-    try:
-        _LOCK_FILE_HANDLE.close()
-    except Exception:
-        pass
+    try: _LOCK_FILE_HANDLE.close()
+    except Exception: pass
     _LOCK_FILE_HANDLE = None
-    try:
-        os.remove(_LOCK_FILE_PATH)
-    except Exception:
-        pass
+    try: os.remove(_LOCK_FILE_PATH)
+    except Exception: pass
 
 def send_wxpusher_notification(content, summary):
     if not ENABLE_WXPUSHER:
         return
     try:
-        payload = {
-            "appToken": WXPUSHER_APP_TOKEN,
-            "content": content,
-            "summary": summary,
-            "uids": WXPUSHER_UIDS
-        }
+        payload = {"appToken": WXPUSHER_APP_TOKEN, "content": content, "summary": summary, "uids": WXPUSHER_UIDS}
         headers = {"Content-Type": "application/json; charset=utf-8", "User-Agent": USER_AGENT}
-        resp = requests.post(
-            WXPUSHER_API_URL,
-            data=json.dumps(payload),
-            headers=headers,
-            timeout=(NOTIFY_CONNECT_TIMEOUT, NOTIFY_TIMEOUT)
-        )
+        resp = requests.post(WXPUSHER_API_URL, data=json.dumps(payload), headers=headers,
+                             timeout=(NOTIFY_CONNECT_TIMEOUT, NOTIFY_TIMEOUT))
         if resp.status_code == 200:
             log("信息", "微信通知已发送")
         else:
@@ -583,64 +492,97 @@ def send_wxpusher_notification(content, summary):
     except Exception as e:
         log("错误", f"微信通知异常: {e}")
 
-RISK_LEVEL_ORDER = {
-    "极度纯净": 0,
-    "纯净": 1,
-    "轻微风险": 2,
-    "高风险": 3,
-    "极度危险": 4,
-}
+RISK_LEVEL_ORDER = {"极度纯净": 0, "纯净": 1, "轻微风险": 2, "高风险": 3, "极度危险": 4}
 
-def get_ip_risk_level(ip):
-    url = f"https://api.090227.xyz/api/ipapi?ip={ip}"
-    try:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=IP_RISK_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception:
-        return "未知"
-
+def _compute_risk_level(data):
     company_score = data.get("company", {}).get("abuser_score")
     asn_score = data.get("asn", {}).get("abuser_score")
     security_flags = {
-        "is_crawler": data.get("is_crawler", False),
-        "is_proxy": data.get("is_proxy", False),
-        "is_vpn": data.get("is_vpn", False),
-        "is_tor": data.get("is_tor", False),
-        "is_abuser": data.get("is_abuser", False),
-        "is_bogon": data.get("is_bogon", False),
+        "is_crawler": data.get("is_crawler", False), "is_proxy": data.get("is_proxy", False),
+        "is_vpn": data.get("is_vpn", False), "is_tor": data.get("is_tor", False),
+        "is_abuser": data.get("is_abuser", False), "is_bogon": data.get("is_bogon", False),
     }
-
     def extract_score(score_str):
         if not score_str:
             return 0.0
         match = re.match(r"([\d.]+)\s*\(([^)]+)\)", str(score_str).strip())
         if match:
             return float(match.group(1))
-        try:
-            return float(score_str)
-        except (ValueError, TypeError):
-            return 0.0
-
+        try: return float(score_str)
+        except (ValueError, TypeError): return 0.0
     company = extract_score(company_score)
     asn = extract_score(asn_score)
     base_score = ((company + asn) / 2) * 5
-    risk_count = sum(1 for key in ["is_crawler", "is_proxy", "is_vpn", "is_tor", "is_abuser"]
-                     if security_flags.get(key, False))
+    risk_count = sum(1 for key in ["is_crawler", "is_proxy", "is_vpn", "is_tor", "is_abuser"] if security_flags.get(key, False))
     final_score = base_score + risk_count * 0.15
     if security_flags.get("is_bogon", False):
         final_score += 1.0
     percentage = final_score * 100
-    if percentage >= 100:
-        return "极度危险"
-    elif percentage >= 20:
-        return "高风险"
-    elif percentage >= 5:
-        return "轻微风险"
-    elif percentage >= 0.25:
-        return "纯净"
-    else:
-        return "极度纯净"
+    if percentage >= 100: return "极度危险"
+    elif percentage >= 20: return "高风险"
+    elif percentage >= 5: return "轻微风险"
+    elif percentage >= 0.25: return "纯净"
+    else: return "极度纯净"
+
+async def get_ip_risk_level_async(session, ip):
+    url = f"https://api.090227.xyz/api/ipapi?ip={ip}"
+    try:
+        async with session.get(
+            url,
+            timeout=aiohttp.ClientTimeout(
+                total=None,
+                connect=IP_RISK_TIMEOUT,
+                sock_connect=IP_RISK_TIMEOUT,
+                sock_read=IP_RISK_TIMEOUT,
+            ),
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json(content_type=None)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return "未知"
+    if not isinstance(data, dict):
+        return "未知"
+    try:
+        return _compute_risk_level(data)
+    except Exception:
+        return "未知"
+
+async def _batch_get_ip_risk_levels_async(ips, workers):
+    results = {}
+    total = len(ips)
+    completed = 0
+    last_print = time.time()
+    it = iter(ips)
+    async with aiohttp.ClientSession(
+        trust_env=(not FORCE_DIRECT),
+        connector=aiohttp.TCPConnector(ssl=False, limit=workers),
+        headers={"User-Agent": USER_AGENT},
+    ) as session:
+        async def worker():
+            nonlocal completed, last_print
+            while True:
+                try:
+                    ip = next(it)
+                except StopIteration:
+                    return
+                try:
+                    level = await get_ip_risk_level_async(session, ip)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    level = "未知"
+                results[ip] = level
+                completed += 1
+                now = time.time()
+                is_last = (completed == total)
+                if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
+                    log("进度", f"IP 风险查询 {completed}/{total} ({(completed/total)*100:.1f}%)", end="\n" if is_last else "")
+                    last_print = now
+        worker_tasks = [asyncio.ensure_future(worker()) for _ in range(min(workers, total))]
+        await asyncio.gather(*worker_tasks)
+    return results
 
 def extract_country_code(label):
     label = label.strip()
@@ -691,39 +633,68 @@ def _parse_json_nodes(data):
         nodes.extend(_parse_text_nodes(data))
     return nodes
 
-def _query_country(ip, port):
-    r = _local_probe(ip, int(port), AVAILABILITY_TIMEOUT)
-    if r["status"] == 200:
-        loc = r["trace"].get("loc", "")
-        if loc and len(loc) == 2:
-            return loc.upper()
-    return None
-
-def _resolve_countries_batch(ipports):
+async def _resolve_countries_batch_async(ipports):
     results = {}
     total = len(ipports)
     completed = 0
     last_print = time.time()
-
-    def worker(ipport):
-        ip, port = ipport.rsplit(':', 1)
-        return ipport, _query_country(ip, port)
-
-    with ThreadPoolExecutor(max_workers=FALLBACK_WORKERS) as executor:
-        futures = {executor.submit(worker, ipp): ipp for ipp in ipports}
-        for future in as_completed(futures):
-            try:
-                ipport, code = future.result()
-                results[ipport] = code
-            except Exception:
-                results[futures[future]] = None
-            completed += 1
-            now = time.time()
-            is_last = (completed == total)
-            if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
-                log("进度", f"反代验证查询 {completed}/{total} ({(completed/total)*100:.1f}%)", end="\n" if is_last else "")
-                last_print = now
+    it = iter(ipports)
+    async def worker():
+        nonlocal completed, last_print
+        resolver = MutablePinnedResolver()
+        connector = aiohttp.TCPConnector(
+            resolver=resolver, ssl=False,
+            force_close=True, use_dns_cache=False,
+        )
+        session = aiohttp.ClientSession(
+            connector=connector, trust_env=False,
+            headers={"User-Agent": USER_AGENT},
+        )
+        try:
+            while True:
+                try:
+                    ipport = next(it)
+                except StopIteration:
+                    return
+                try:
+                    ip, port = ipport.rsplit(':', 1)
+                    resolver.set_target(ip, int(port))
+                    async with session.get(
+                        f"https://{PROBE_HOST}{PROBE_PATH}",
+                        timeout=aiohttp.ClientTimeout(
+                            total=None,
+                            connect=AVAILABILITY_CONNECT_TIMEOUT,
+                            sock_connect=AVAILABILITY_CONNECT_TIMEOUT,
+                            sock_read=AVAILABILITY_TIMEOUT,
+                        ),
+                        allow_redirects=False,
+                    ) as r:
+                        if r.status == 200:
+                            text = await r.text()
+                            trace = _parse_trace_text(text)
+                            loc = trace.get("loc", "")
+                            if loc and len(loc) == 2:
+                                results[ipport] = loc.upper()
+                            else:
+                                results[ipport] = None
+                        else:
+                            results[ipport] = None
+                except Exception:
+                    results[ipport] = None
+                completed += 1
+                now = time.time()
+                is_last = (completed == total)
+                if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
+                    log("进度", f"反代验证查询 {completed}/{total} ({(completed/total)*100:.1f}%)", end="\n" if is_last else "")
+                    last_print = now
+        finally:
+            await session.close()
+    workers = [asyncio.ensure_future(worker()) for _ in range(min(FALLBACK_WORKERS, total))]
+    await asyncio.gather(*workers)
     return results
+
+def _resolve_countries_batch(ipports):
+    return _run_async(_resolve_countries_batch_async(ipports))
 
 def _parse_text_nodes(text):
     nodes = []
@@ -798,6 +769,7 @@ class IpInfoAsync:
         self.n_tokens = len(token_list)
         self.current_token_index = 0
         self.token_lock = asyncio.Lock()
+        self.concurrency = concurrency
         self.semaphore = asyncio.Semaphore(concurrency)
         self.min_interval = min_interval
         self.session = None
@@ -807,19 +779,16 @@ class IpInfoAsync:
         self.cooldown_until = [0.0] * self.n_tokens
         self.last_request_time = [0.0] * self.n_tokens
         self.rate_locks = [asyncio.Lock() for _ in range(self.n_tokens)]
-
     async def __aenter__(self):
         self.session = aiohttp.ClientSession(
             trust_env=self.trust_env,
-            connector=aiohttp.TCPConnector(ssl=False),
+            connector=aiohttp.TCPConnector(ssl=False, limit=self.concurrency),
             headers={"User-Agent": USER_AGENT},
         )
         return self
-
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             await self.session.close()
-
     async def _acquire_token(self):
         async with self.token_lock:
             now = asyncio.get_event_loop().time()
@@ -833,7 +802,6 @@ class IpInfoAsync:
             idx = min(range(n), key=lambda i: self.token_failures[i])
             self.current_token_index = idx
             return idx
-
     async def _rate_limit(self, idx):
         async with self.rate_locks[idx]:
             now = asyncio.get_event_loop().time()
@@ -841,21 +809,17 @@ class IpInfoAsync:
             if wait > 0:
                 await asyncio.sleep(wait)
             self.last_request_time[idx] = asyncio.get_event_loop().time()
-
     async def get_ip_details(self, ip_address):
         max_attempts = max(3, min(self.n_tokens, 10))
         for _ in range(max_attempts):
             idx = await self._acquire_token()
             token = self.token_list[idx]
             url = (f"https://ipinfo.io/{ip_address}/json?token={token}"
-                   if ip_address else
-                   f"https://ipinfo.io/json?token={token}")
+                   if ip_address else f"https://ipinfo.io/json?token={token}")
             await self._rate_limit(idx)
             async with self.semaphore:
                 try:
-                    async with self.session.get(
-                        url, timeout=aiohttp.ClientTimeout(total=IP_CALIBRATION_REQUEST_TIMEOUT)
-                    ) as resp:
+                    async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=IP_CALIBRATION_REQUEST_TIMEOUT)) as resp:
                         if resp.status == 429:
                             self.cooldown_until[idx] = asyncio.get_event_loop().time() + 1.0
                             continue
@@ -899,11 +863,6 @@ def load_ipinfo_cache(cache_file):
             cache[ipport.strip()] = tag.strip()
     return cache
 
-def save_ipinfo_cache(cache_file, new_records):
-    with open(cache_file, "a", encoding="utf-8") as f:
-        for ipport, tag in new_records:
-            f.write(f"{ipport}#{tag}\n")
-
 def sort_cache_file(cache_file):
     if not os.path.exists(cache_file):
         return
@@ -928,93 +887,95 @@ def sort_cache_file(cache_file):
 
 async def validate_tokens(token_list, concurrency, min_interval, trust_env):
     valid = []
-    sem = asyncio.Semaphore(concurrency)
+    total = len(token_list)
+    completed = 0
+    last_print = time.time()
+    it = iter(token_list)
     async with aiohttp.ClientSession(
         trust_env=trust_env,
-        connector=aiohttp.TCPConnector(ssl=False),
+        connector=aiohttp.TCPConnector(ssl=False, limit=concurrency),
         headers={"User-Agent": USER_AGENT},
     ) as session:
-        async def check(token):
-            url = f"https://ipinfo.io/json?token={token}"
-            try:
-                async with sem:
+        async def worker():
+            nonlocal completed, last_print
+            while True:
+                try:
+                    token = next(it)
+                except StopIteration:
+                    return
+                url = f"https://ipinfo.io/json?token={token}"
+                ok = False
+                try:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=IP_CALIBRATION_REQUEST_TIMEOUT)) as resp:
-                        if resp.status != 200:
-                            return token, False
-                        data = await resp.json()
-                        return token, bool(data.get("country"))
-            except Exception:
-                return token, False
-
-        tasks = [asyncio.ensure_future(check(t)) for t in token_list]
-        total = len(tasks)
-        completed = 0
-        last_print = time.time()
-        for coro in asyncio.as_completed(tasks):
-            token, ok = await coro
-            if ok:
-                valid.append(token)
-            completed += 1
-            now = time.time()
-            is_last = (completed == total)
-            if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
-                log("进度", f"Token 校验 {completed}/{total}", end="\n" if is_last else "")
-                last_print = now
+                        if resp.status == 200:
+                            data = await resp.json()
+                            ok = bool(data.get("country"))
+                except Exception:
+                    ok = False
+                if ok:
+                    valid.append(token)
+                completed += 1
+                now = time.time()
+                is_last = (completed == total)
+                if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
+                    log("进度", f"Token 校验 {completed}/{total}", end="\n" if is_last else "")
+                    last_print = now
+        workers = [asyncio.ensure_future(worker()) for _ in range(min(concurrency, total))]
+        await asyncio.gather(*workers)
     return valid
 
-async def query_new_ips(new_ips, token_list, concurrency, min_interval, trust_env,
-                        ipport_map=None, cache_file=None):
+async def query_new_ips(new_ips, token_list, concurrency, min_interval, trust_env, ipport_map=None, cache_file=None):
     result = {}
     if not new_ips or not token_list:
         return result
     log("信息", f"地区校准查询 {len(new_ips)} 个新 IP")
     async with IpInfoAsync(token_list, concurrency, min_interval, trust_env, TOKEN_FAILURE_THRESHOLD) as handler:
-        tasks = []
-        for ip in new_ips:
-            task = asyncio.ensure_future(handler.get_ip_details(ip))
-            task.my_ip = ip
-            tasks.append(task)
-        total = len(tasks)
+        total = len(new_ips)
         completed = 0
         failed = 0
         last_print = time.time()
         f = None
         if cache_file:
             f = open(cache_file, "a", encoding="utf-8")
+        it = iter(new_ips)
+        async def worker():
+            nonlocal completed, failed, last_print
+            while True:
+                try:
+                    ip = next(it)
+                except StopIteration:
+                    return
+                try:
+                    info = await handler.get_ip_details(ip)
+                except Exception:
+                    info = None
+                completed += 1
+                if info and info.get("CountryCode") != "Unknown":
+                    tag_parts = [info["CountryCode"]]
+                    if info.get("Region") and info["Region"] != "Unknown":
+                        tag_parts.append(info["Region"])
+                    if info.get("City") and info["City"] != "Unknown":
+                        tag_parts.append(info["City"])
+                    if info.get("ASN") and info["ASN"] != "Unknown":
+                        tag_parts.append(info["ASN"])
+                    if info.get("ISP") and info["ISP"] != "Unknown":
+                        tag_parts.append(info["ISP"])
+                    tag = " ".join(tag_parts)
+                    result[ip] = tag
+                    if f and ipport_map and ip in ipport_map:
+                        for ipport in ipport_map[ip]:
+                            f.write(f"{ipport}#{tag}\n")
+                        f.flush()
+                else:
+                    failed += 1
+                now = time.time()
+                is_last = (completed == total)
+                if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
+                    log("进度", f"地区校准 {completed}/{total}", end="\n" if is_last else "")
+                    last_print = now
         try:
-            pending = set(tasks)
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    ip = task.my_ip
-                    try:
-                        info = task.result()
-                    except Exception:
-                        info = None
-                    completed += 1
-                    if info and info.get("CountryCode") != "Unknown":
-                        tag_parts = [info["CountryCode"]]
-                        if info.get("Region") and info["Region"] != "Unknown":
-                            tag_parts.append(info["Region"])
-                        if info.get("City") and info["City"] != "Unknown":
-                            tag_parts.append(info["City"])
-                        if info.get("ASN") and info["ASN"] != "Unknown":
-                            tag_parts.append(info["ASN"])
-                        if info.get("ISP") and info["ISP"] != "Unknown":
-                            tag_parts.append(info["ISP"])
-                        tag = " ".join(tag_parts)
-                        result[ip] = tag
-                        if f and ipport_map and ip in ipport_map:
-                            for ipport in ipport_map[ip]:
-                                f.write(f"{ipport}#{tag}\n")
-                                f.flush()
-                    else:
-                        failed += 1
-                    now = time.time()
-                    is_last = (completed == total)
-                    if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
-                        log("进度", f"地区校准 {completed}/{total}", end="\n" if is_last else "")
-                        last_print = now
+            workers = [asyncio.ensure_future(worker()) for _ in range(min(concurrency, total))]
+            await asyncio.gather(*workers)
         finally:
             if f:
                 f.close()
@@ -1038,7 +999,7 @@ def calibrate_regions(nodes, token_file, cache_file):
         log("警告", "valid_tokens.txt 为空，跳过校准")
         return
     trust_env = not FORCE_DIRECT
-    valid_tokens = asyncio.run(validate_tokens(token_list, IP_CALIBRATION_CONCURRENCY, IP_CALIBRATION_MIN_INTERVAL, trust_env))
+    valid_tokens = _run_async(validate_tokens(token_list, IP_CALIBRATION_CONCURRENCY, IP_CALIBRATION_MIN_INTERVAL, trust_env))
     if not valid_tokens:
         log("错误", "所有 token 已失效，跳过校准")
         send_wxpusher_notification("IP地区校准：所有token均已失效，本次校准跳过。", "IP校准 Token 耗尽")
@@ -1050,6 +1011,7 @@ def calibrate_regions(nodes, token_file, cache_file):
         ipport_set.add(ipport)
     cached_ipports = set(cache.keys())
     new_ipports = ipport_set - cached_ipports
+    has_new_ipports = bool(new_ipports)
     if not new_ipports:
         log("信息", "所有 IP 已在缓存中")
     else:
@@ -1060,14 +1022,10 @@ def calibrate_regions(nodes, token_file, cache_file):
             new_ips_set.add(ip)
             ip_to_ipports[ip].append(ipport)
         log("信息", f"新 IP:端口 {len(new_ipports)} 个，唯一 IP {len(new_ips_set)} 个")
-        ip_info = asyncio.run(query_new_ips(
-            list(new_ips_set),
-            valid_tokens,
-            IP_CALIBRATION_CONCURRENCY,
-            IP_CALIBRATION_MIN_INTERVAL,
-            trust_env,
-            ipport_map=ip_to_ipports,
-            cache_file=cache_file
+        ip_info = _run_async(query_new_ips(
+            list(new_ips_set), valid_tokens, IP_CALIBRATION_CONCURRENCY,
+            IP_CALIBRATION_MIN_INTERVAL, trust_env,
+            ipport_map=ip_to_ipports, cache_file=cache_file
         ))
         for ip, tag in ip_info.items():
             for ipport in ip_to_ipports.get(ip, []):
@@ -1078,17 +1036,23 @@ def calibrate_regions(nodes, token_file, cache_file):
         if tag:
             country_code = tag.split()[0]
             nodes[i] = f"{ipport}#{country_code}"
-    sort_cache_file(cache_file)
+    if has_new_ipports:
+        sort_cache_file(cache_file)
 
-def test_tcp_latency(ip, port, timeout=TIMEOUT, probes=TCP_PROBES):
+async def test_tcp_latency_async(ip, port, timeout=TIMEOUT, probes=TCP_PROBES):
     max_latency = 0.0
     success = 0
     for _ in range(probes):
         try:
             start = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(timeout)
-                sock.connect((ip, int(port)))
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, int(port)), timeout=timeout
+            )
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
             latency = time.time() - start
             if latency > max_latency:
                 max_latency = latency
@@ -1099,17 +1063,43 @@ def test_tcp_latency(ip, port, timeout=TIMEOUT, probes=TCP_PROBES):
         return float("inf"), 0
     return max_latency, success
 
-def test_node(node_str):
+async def test_node_async(node_str):
     m = NODE_PATTERN.match(node_str)
     if not m:
         return None
     ip, port, country = m.groups()
-    min_lat, success = test_tcp_latency(ip, port)
+    min_lat, success = await test_tcp_latency_async(ip, port)
     if success == 0 or (success / TCP_PROBES) < MIN_SUCCESS_RATE:
         return None
     return (node_str, min_lat, country, success)
 
-def check_availability(node_str, local_public_ip=None):
+async def run_tcp_tests(nodes, max_workers):
+    total = len(nodes)
+    completed = 0
+    last_print = time.time()
+    results = []
+    it = iter(nodes)
+    async def worker():
+        nonlocal completed, last_print
+        while True:
+            try:
+                node = next(it)
+            except StopIteration:
+                return
+            res = await test_node_async(node)
+            completed += 1
+            if res:
+                results.append(res)
+            now = time.time()
+            is_last = (completed == total)
+            if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
+                log("进度", f"TCP 测试 {completed}/{total} ({(completed/total)*100:.1f}%)", end="\n" if is_last else "")
+                last_print = now
+    workers = [asyncio.ensure_future(worker()) for _ in range(min(max_workers, total))]
+    await asyncio.gather(*workers)
+    return results
+
+async def check_availability_async(node_str, local_public_ip=None):
     m = IP_PORT_PATTERN.match(node_str)
     if not m:
         return (node_str, False, "unknown", {}, [])
@@ -1120,80 +1110,115 @@ def check_availability(node_str, local_public_ip=None):
     best_trace = None
     families = set()
     latencies = []
-    for _ in range(test_rounds):
-        round_ok = False
-        for attempt in range(total_attempts):
-            r = _local_probe(ip, port, AVAILABILITY_TIMEOUT)
-            if r["status"] is None:
-                if attempt < total_attempts - 1 and retry_delay > 0:
-                    time.sleep(retry_delay)
-                continue
-            if r["status"] != 200:
+    connector = aiohttp.TCPConnector(resolver=PinnedResolver(ip, port), ssl=False)
+    session = aiohttp.ClientSession(
+        connector=connector, trust_env=False,
+        headers={"User-Agent": USER_AGENT},
+    )
+    try:
+        for _ in range(test_rounds):
+            round_ok = False
+            for attempt in range(total_attempts):
+                r = await _local_probe_async(session, AVAILABILITY_TIMEOUT)
+                if r["status"] is None:
+                    if attempt < total_attempts - 1 and retry_delay > 0:
+                        await asyncio.sleep(retry_delay)
+                    continue
+                if r["status"] != 200:
+                    return (node_str, False, "unknown", {}, [])
+                server = r["headers"].get("Server", "").lower()
+                trace = r["trace"]
+                if not (server.startswith("cloudflare")
+                        and r["headers"].get("CF-RAY")
+                        and trace.get("uag") == r["ua"]
+                        and trace.get("colo")
+                        and trace.get("ip")
+                        and trace.get("visit_scheme") == "https"
+                        and trace.get("tls") != "off"
+                        and trace.get("kex") != "none"):
+                    return (node_str, False, "unknown", {}, [])
+                round_ok = True
+                families.add("ipv6" if ":" in trace["ip"] else "ipv4")
+                if best_trace is None:
+                    best_trace = trace
+                if r.get("elapsed_ms") is not None:
+                    latencies.append(r["elapsed_ms"])
+                break
+            if not round_ok:
                 return (node_str, False, "unknown", {}, [])
-            server = r["headers"].get("Server", "").lower()
-            trace = r["trace"]
-            if not (server.startswith("cloudflare")
-                    and r["headers"].get("CF-RAY")
-                    and trace.get("uag") == r["ua"]
-                    and trace.get("colo")
-                    and trace.get("ip")
-                    and trace.get("visit_scheme") == "https"
-                    and trace.get("tls") != "off"
-                    and trace.get("kex") != "none"):
+        if best_trace and families:
+            if local_public_ip and best_trace.get("ip") == local_public_ip:
                 return (node_str, False, "unknown", {}, [])
-            round_ok = True
-            families.add("ipv6" if ":" in trace["ip"] else "ipv4")
-            if best_trace is None:
-                best_trace = trace
-            if r.get("elapsed_ms") is not None:
-                latencies.append(r["elapsed_ms"])
-            break
-        if not round_ok:
-            return (node_str, False, "unknown", {}, [])
-    if best_trace and families:
-        if local_public_ip and best_trace.get("ip") == local_public_ip:
-            return (node_str, False, "unknown", {}, [])
-        if len(families) == 2:
-            stack = "dual_stack"
-        else:
-            stack = f"{next(iter(families))}_only"
-        return (node_str, True, stack, best_trace, latencies)
-    return (node_str, False, "unknown", {}, [])
+            if len(families) == 2:
+                stack = "dual_stack"
+            else:
+                stack = f"{next(iter(families))}_only"
+            return (node_str, True, stack, best_trace, latencies)
+        return (node_str, False, "unknown", {}, [])
+    finally:
+        await session.close()
 
-def availability_filter_candidates(candidates):
+async def _fetch_local_ip_from_host(ip_session, host):
+    try:
+        async with ip_session.get(
+            f"https://{host}/cdn-cgi/trace",
+            timeout=aiohttp.ClientTimeout(total=3),
+        ) as r:
+            if r.status == 200:
+                text = await r.text()
+                for line in text.splitlines():
+                    if line.startswith("ip="):
+                        return line[3:].strip()
+    except Exception:
+        pass
+    return None
+
+async def _get_local_public_ip_async():
+    hosts = ["www.cf-ns.com", "www.cf-ns.net", "www.cf-ns.tech"]
+    async with aiohttp.ClientSession(
+        trust_env=False,
+        connector=aiohttp.TCPConnector(ssl=False),
+        headers={"User-Agent": USER_AGENT},
+    ) as ip_session:
+        tasks = [asyncio.ensure_future(_fetch_local_ip_from_host(ip_session, h)) for h in hosts]
+        try:
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    result = task.result()
+                    if result:
+                        for p in pending:
+                            p.cancel()
+                        return result
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+async def availability_filter_candidates_async(candidates):
     if not TEST_AVAILABILITY or not candidates:
         return candidates, {}, {}, {}
-    local_public_ip = None
-    ip_hosts = ["www.cf-ns.com", "www.cf-ns.net", "www.cf-ns.tech"]
-    for host in ip_hosts:
-        try:
-            r = requests.get(
-                f"https://{host}/cdn-cgi/trace",
-                timeout=3,
-                proxies={"http": None, "https": None},
-                headers={"User-Agent": USER_AGENT},
-            )
-            if r.status_code == 200:
-                for line in r.text.splitlines():
-                    if line.startswith("ip="):
-                        local_public_ip = line[3:].strip()
-                        break
-            if local_public_ip:
-                break
-        except Exception:
-            pass
+    local_public_ip = await _get_local_public_ip_async()
     passed = []
     ip_info = {}
     avail_latency_map = {}
     avail_jitter_map = {}
-    completed = 0
     total = len(candidates)
+    completed = 0
     last_print = time.time()
-    with ThreadPoolExecutor(max_workers=AVAILABILITY_WORKERS) as executor:
-        futures = {executor.submit(check_availability, node, local_public_ip): node for node in candidates}
-        for future in as_completed(futures):
+    it = iter(candidates)
+    async def worker():
+        nonlocal completed, last_print
+        while True:
+            try:
+                node = next(it)
+            except StopIteration:
+                return
+            result = await check_availability_async(node, local_public_ip)
             completed += 1
-            node_str, ok, stack, _, latencies = future.result()
+            node_str, ok, stack, _, latencies = result
             if ok:
                 passed.append(node_str)
                 ip_info[node_str] = stack
@@ -1207,9 +1232,11 @@ def availability_filter_candidates(candidates):
             if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
                 log("进度", f"反代验证 {completed}/{total} ({(completed/total)*100:.1f}%)", end="\n" if is_last else "")
                 last_print = now
+    workers = [asyncio.ensure_future(worker()) for _ in range(min(AVAILABILITY_WORKERS, total))]
+    await asyncio.gather(*workers)
     return passed, ip_info, avail_latency_map, avail_jitter_map
 
-def availability_filter_with_retry(candidates):
+async def availability_filter_with_retry_async(candidates):
     if not TEST_AVAILABILITY or not candidates:
         return candidates, {}, {}, {}
     passed = []
@@ -1218,13 +1245,13 @@ def availability_filter_with_retry(candidates):
     avail_jitter_map = {}
     for attempt in range(1, AVAILABILITY_RETRY_MAX + 1):
         log("信息", f"反代验证 第 {attempt}/{AVAILABILITY_RETRY_MAX} 轮（{len(candidates)} 候选）")
-        passed, ip_info, avail_latency_map, avail_jitter_map = availability_filter_candidates(candidates)
+        passed, ip_info, avail_latency_map, avail_jitter_map = await availability_filter_candidates_async(candidates)
         if passed:
             log("信息", f"反代验证通过 {len(passed)} 个节点")
             return passed, ip_info, avail_latency_map, avail_jitter_map
         if attempt < AVAILABILITY_RETRY_MAX:
             log("警告", f"本轮反代验证 0 通过，等待 {AVAILABILITY_RETRY_DELAY}s 重试")
-            time.sleep(AVAILABILITY_RETRY_DELAY)
+            await asyncio.sleep(AVAILABILITY_RETRY_DELAY)
     log("错误", f"反代验证 {AVAILABILITY_RETRY_MAX} 轮后仍 0 通过")
     send_wxpusher_notification(
         content=f"反代验证经 {AVAILABILITY_RETRY_MAX} 轮重试后仍无节点通过，已跳过过滤，使用原候选列表继续。",
@@ -1232,7 +1259,7 @@ def availability_filter_with_retry(candidates):
     )
     return candidates, {}, {}, {}
 
-def measure_bandwidth_curl(node_str):
+async def measure_bandwidth_curl_async(node_str):
     m = IP_PORT_PATTERN.match(node_str)
     if not m:
         return (node_str, 0)
@@ -1251,11 +1278,7 @@ def measure_bandwidth_curl(node_str):
         insecure_flag = ["--insecure"]
     null_device = "NUL" if sys.platform == "win32" else "/dev/null"
     expected_size = BANDWIDTH_SIZE_MB * 1024 * 1024
-    url = BANDWIDTH_URL_TEMPLATE.format(
-        scheme=scheme,
-        port=port,
-        bytes=int(BANDWIDTH_SIZE_MB * 1024 * 1024)
-    )
+    url = BANDWIDTH_URL_TEMPLATE.format(scheme=scheme, port=port, bytes=int(BANDWIDTH_SIZE_MB * 1024 * 1024))
     _bw_host = urlparse(url).hostname
     if not _bw_host:
         _bw_host = "speed.cloudflare.com"
@@ -1263,60 +1286,88 @@ def measure_bandwidth_curl(node_str):
     curl_cmd = [
         "curl", "-s", "-o", null_device,
         "-w", "%{size_download} %{time_starttransfer} %{time_total}",
-        "-L",
-        "-H", f"User-Agent: {USER_AGENT}",
-        "-H", "Accept: */*",
-        "-H", "Accept-Language: zh-CN,zh;q=0.9",
-        "-H", "Accept-Encoding: identity",
-        "--http2",
-        "--noproxy", "*",
+        "-L", "-H", f"User-Agent: {USER_AGENT}",
+        "-H", "Accept: */*", "-H", "Accept-Language: zh-CN,zh;q=0.9",
+        "-H", "Accept-Encoding: identity", "--http2", "--noproxy", "*",
         "--resolve", f"{_bw_host}:{port}:{ip}",
         "--connect-timeout", str(BANDWIDTH_CONNECT_TIMEOUT),
         "--max-time", str(BANDWIDTH_TIMEOUT),
     ] + insecure_flag + [url]
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
-        result = subprocess.run(curl_cmd, capture_output=True, text=True,
-                                timeout=BANDWIDTH_TIMEOUT + BANDWIDTH_PROCESS_BUFFER)
-        if result.returncode == 0 and result.stdout.strip():
-            parts = result.stdout.strip().split()
-            if len(parts) >= 3:
-                size_bytes = float(parts[0])
-                if size_bytes < expected_size:
-                    return (node_str, 0)
-                time_total = float(parts[2])
-                if time_total > 0:
-                    speed_mbps = (size_bytes * 8) / (time_total * 1000 * 1000)
-                    return (node_str, speed_mbps)
+        process = await asyncio.create_subprocess_exec(
+            *curl_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=creationflags,
+        )
+        communicate_task = asyncio.create_task(process.communicate())
+        try:
+            stdout_bytes, _ = await asyncio.wait_for(
+                asyncio.shield(communicate_task),
+                timeout=BANDWIDTH_TIMEOUT + BANDWIDTH_PROCESS_BUFFER,
+            )
+        except asyncio.TimeoutError:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            try:
+                await communicate_task
+            except Exception:
+                pass
+            return (node_str, 0)
+        if process.returncode == 0 and stdout_bytes:
+            stdout = stdout_bytes.decode("utf-8", errors="ignore").strip()
+            if stdout:
+                parts = stdout.split()
+                if len(parts) >= 3:
+                    size_bytes = float(parts[0])
+                    if size_bytes < expected_size:
+                        return (node_str, 0)
+                    time_total = float(parts[2])
+                    if time_total > 0:
+                        speed_mbps = (size_bytes * 8) / (time_total * 1000 * 1000)
+                        return (node_str, speed_mbps)
     except Exception:
         pass
     return (node_str, 0)
 
-def bandwidth_filter(candidates):
+async def bandwidth_filter_async(candidates):
     if not candidates:
         return []
     if not shutil.which("curl"):
         log("错误", "未检测到 curl，跳过带宽测速")
         return []
     results = []
-    completed = 0
     total = len(candidates)
+    completed = 0
     last_print = time.time()
-    with ThreadPoolExecutor(max_workers=BANDWIDTH_WORKERS) as executor:
-        futures = {executor.submit(measure_bandwidth_curl, node): node for node in candidates}
-        for future in as_completed(futures):
+    it = iter(candidates)
+    async def worker():
+        nonlocal completed, last_print
+        while True:
+            try:
+                node = next(it)
+            except StopIteration:
+                return
+            node_str, speed = await measure_bandwidth_curl_async(node)
             completed += 1
-            node, speed = future.result()
             if speed > 0:
-                results.append((node, speed))
+                results.append((node_str, speed))
             now = time.time()
             is_last = (completed == total)
             if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
                 log("进度", f"带宽测速 {completed}/{total} ({(completed/total)*100:.1f}%)", end="\n" if is_last else "")
                 last_print = now
+    workers = [asyncio.ensure_future(worker()) for _ in range(min(BANDWIDTH_WORKERS, total))]
+    await asyncio.gather(*workers)
     results.sort(key=lambda x: x[1], reverse=True)
     return results
 
-def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, target_count=None, latency_map=None, http_latency_map=None, http_jitter_map=None, final_nodes=None):
+def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, target_count=None,
+                                latency_map=None, http_latency_map=None, http_jitter_map=None, final_nodes=None):
     if not CF_ENABLED:
         log("信息", "CF DNS 更新未启用")
         return
@@ -1343,14 +1394,7 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
         if ip_set:
             workers = min(IP_RISK_WORKERS, len(ip_set))
             log("信息", f"IP 风险查询（{len(ip_set)} IP，并发 {workers}）")
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                futures = {ex.submit(get_ip_risk_level, ip): ip for ip in ip_set}
-                for future in as_completed(futures):
-                    ip = futures[future]
-                    try:
-                        risk_map[ip] = future.result()
-                    except Exception:
-                        risk_map[ip] = "未知"
+            risk_map = _run_async(_batch_get_ip_risk_levels_async(list(ip_set), workers))
     if full_bw_results:
         blocked_set = set()
         if FILTER_BLOCKED_COUNTRIES_ENABLED:
@@ -1476,11 +1520,7 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
         if lat_ms != float('inf'):
             line += f" 延迟 {lat_ms:.2f} ms"
         log("信息", line)
-    headers = {
-        "Authorization": f"Bearer {CF_API_TOKEN}",
-        "Content-Type": "application/json",
-        "User-Agent": USER_AGENT,
-    }
+    headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json", "User-Agent": USER_AGENT}
     if record_type == "A":
         for attempt in range(1, DNS_UPDATE_MAX_RETRIES + 1):
             log("信息", f"DNS 更新 第 {attempt}/{DNS_UPDATE_MAX_RETRIES} 次")
@@ -1493,20 +1533,10 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
                     raise Exception(f"查询 DNS 记录失败: {result.get('errors')}")
                 existing_records = result.get('result', [])
                 deletes = [{"id": rec["id"]} for rec in existing_records]
-                posts = [
-                    {
-                        "name": CF_DNS_RECORD_NAME,
-                        "type": "A",
-                        "content": ip,
-                        "ttl": CF_TTL,
-                        "proxied": CF_PROXIED
-                    }
-                    for ip in dns_content_list
-                ]
+                posts = [{"name": CF_DNS_RECORD_NAME, "type": "A", "content": ip, "ttl": CF_TTL, "proxied": CF_PROXIED} for ip in dns_content_list]
                 batch_url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/dns_records/batch"
                 payload = {"deletes": deletes, "posts": posts}
-                response = requests.post(batch_url, headers=headers, json=payload,
-                                        timeout=(CF_DNS_CONNECT_TIMEOUT, CF_DNS_READ_TIMEOUT))
+                response = requests.post(batch_url, headers=headers, json=payload, timeout=(CF_DNS_CONNECT_TIMEOUT, CF_DNS_READ_TIMEOUT))
                 response.raise_for_status()
                 result = response.json()
                 if not result.get('success'):
@@ -1531,19 +1561,10 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
                 resp.raise_for_status()
                 existing = resp.json().get('result', [])
                 deletes = [{"id": rec["id"]} for rec in existing]
-                posts = [
-                    {
-                        "name": CF_DNS_RECORD_NAME,
-                        "type": "TXT",
-                        "content": content,
-                        "ttl": CF_TTL
-                    }
-                    for content in dns_content_list
-                ]
+                posts = [{"name": CF_DNS_RECORD_NAME, "type": "TXT", "content": content, "ttl": CF_TTL} for content in dns_content_list]
                 batch_url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/dns_records/batch"
                 payload = {"deletes": deletes, "posts": posts}
-                batch_resp = requests.post(batch_url, headers=headers, json=payload,
-                                           timeout=(CF_DNS_CONNECT_TIMEOUT, CF_DNS_READ_TIMEOUT))
+                batch_resp = requests.post(batch_url, headers=headers, json=payload, timeout=(CF_DNS_CONNECT_TIMEOUT, CF_DNS_READ_TIMEOUT))
                 batch_resp.raise_for_status()
                 result = batch_resp.json()
                 if not result.get('success'):
@@ -1583,13 +1604,8 @@ def sync_to_github():
         log("信息", f"GitHub 同步 第 {attempt}/{GITHUB_SYNC_MAX_RETRIES} 次")
         try:
             cmd = interpreter + [script_path]
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                creationflags=creationflags
-            )
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, creationflags=creationflags)
             try:
                 stdout, stderr = process.communicate(timeout=GIT_SYNC_PROCESS_TIMEOUT)
                 if process.returncode == 0:
@@ -1613,11 +1629,8 @@ def sync_to_github():
     )
     log("错误", f"GitHub 推送 {GITHUB_SYNC_MAX_RETRIES} 次均失败")
 
-def write_ip_txt(final_nodes, output_file,
-                 header_enabled, header_lines,
-                 footer_enabled, footer_lines,
-                 perline_enabled, perline_text,
-                 speed_map=None, latency_map=None,
+def write_ip_txt(final_nodes, output_file, header_enabled, header_lines, footer_enabled, footer_lines,
+                 perline_enabled, perline_text, speed_map=None, latency_map=None,
                  http_latency_map=None, http_jitter_map=None):
     with open(output_file, "w", encoding="utf-8") as f:
         if header_enabled:
@@ -1640,7 +1653,21 @@ def write_ip_txt(final_nodes, output_file,
             for line in footer_lines:
                 f.write(line + "\n")
 
+def raise_fd_limit():
+    try:
+        import resource
+    except ImportError:
+        return
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft == hard:
+            return
+        resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+    except (ValueError, OSError):
+        pass
+
 def main():
+    raise_fd_limit()
     mode_str = f"全局最优 {GLOBAL_TOP_N} 个" if USE_GLOBAL_MODE else f"每个国家最优 {PER_COUNTRY_TOP_N} 个"
     log("信息", f"模式 {mode_str}")
     if PRE_FILTER_PORT_ENABLED and PRE_FILTER_PORTS:
@@ -1667,7 +1694,6 @@ def main():
     else:
         log("信息", "DNS 黑名单 禁用")
     log("信息", f"IP 风险过滤 {'启用' if DNS_IP_RISK_FILTER_ENABLED else '禁用'}（≤{DNS_IP_RISK_MAX_LEVEL}）")
-
     nodes = []
     for source in ADDITIONAL_SOURCES:
         if not source.get("enabled", True):
@@ -1686,11 +1712,9 @@ def main():
                     seen.add(key)
                     nodes.append(n)
     log("信息", f"合并后总计 {len(nodes)} 个节点")
-
     token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), IP_CALIBRATION_TOKEN_FILE)
     cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), IP_CALIBRATION_CACHE_FILE)
     calibrate_regions(nodes, token_file, cache_file)
-
     if PRE_FILTER_PORT_ENABLED and PRE_FILTER_PORTS:
         before = len(nodes)
         nodes = [n for n in nodes if n.split(':')[1].split('#')[0] in PRE_FILTER_PORTS]
@@ -1725,31 +1749,14 @@ def main():
         if not nodes:
             log("错误", "前置白名单过滤后 0 节点，退出")
             sys.exit(0)
-
     total = len(nodes)
     log("信息", f"TCP 测试（{total} 候选）")
-    results = []
-    completed = 0
-    last_print = time.time()
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(test_node, node): node for node in nodes}
-        for future in as_completed(futures):
-            completed += 1
-            res = future.result()
-            if res:
-                results.append(res)
-            now = time.time()
-            is_last = (completed == total)
-            if is_last or now - last_print >= PROGRESS_PRINT_INTERVAL:
-                log("进度", f"TCP 测试 {completed}/{total} ({(completed/total)*100:.1f}%)", end="\n" if is_last else "")
-                last_print = now
+    results = _run_async(run_tcp_tests(nodes, MAX_WORKERS))
     if not results:
         log("错误", "没有通过成功率筛选的节点")
         sys.exit(0)
-
     results.sort(key=lambda x: (-x[3], x[1]))
     latency_map = {node: lat for node, lat, _, _ in results}
-
     if USE_GLOBAL_MODE:
         candidates = [node for node, _, _, _ in results[:BANDWIDTH_CANDIDATES]]
         log("信息", f"TCP 候选池 {len(candidates)} 个节点")
@@ -1766,23 +1773,22 @@ def main():
             for node_str, lat, succ in nodes_sorted[:limit]:
                 candidates.append(node_str)
         log("信息", f"分国家候选池：{total_countries} 国，每国 ≤{base_limit}，合计 {len(candidates)}")
-
     if not candidates:
         log("错误", "没有候选节点，退出")
         sys.exit(0)
-
-    candidates_after_availability, avail_ip_info, avail_latency_map, avail_jitter_map = availability_filter_with_retry(candidates)
+    candidates_after_availability, avail_ip_info, avail_latency_map, avail_jitter_map = _run_async(
+        availability_filter_with_retry_async(candidates)
+    )
     if HTTP_LATENCY_ENABLED:
         http_latency_map = avail_latency_map
         http_jitter_map = avail_jitter_map
     else:
         http_latency_map = {}
         http_jitter_map = {}
-
     bw_results = []
     for attempt in range(1, BANDWIDTH_RETRY_MAX + 1):
         log("信息", f"带宽测速 第 {attempt}/{BANDWIDTH_RETRY_MAX} 轮（{len(candidates_after_availability)} 候选）")
-        bw_results = bandwidth_filter(candidates_after_availability)
+        bw_results = _run_async(bandwidth_filter_async(candidates_after_availability))
         if bw_results:
             log("信息", f"带宽测速通过 {len(bw_results)} 个节点")
             break
@@ -1790,7 +1796,6 @@ def main():
         if attempt < BANDWIDTH_RETRY_MAX:
             log("警告", f"本轮测速 0 结果，等待 {BANDWIDTH_RETRY_DELAY}s 重试")
             time.sleep(BANDWIDTH_RETRY_DELAY)
-
     if not bw_results:
         log("错误", "带宽测速重试后仍 0 结果，降级用 TCP 排序")
         send_wxpusher_notification(
@@ -1801,10 +1806,7 @@ def main():
         if OUTPUT_FILTER_COUNTRIES_ENABLED and OUTPUT_ALLOWED_COUNTRIES:
             allowed_set = {c.upper() for c in OUTPUT_ALLOWED_COUNTRIES}
             before = len(results)
-            filtered_results = [
-                r for r in results
-                if '#' in r[0] and r[0].split('#')[-1].split()[0].upper() in allowed_set
-            ]
+            filtered_results = [r for r in results if '#' in r[0] and r[0].split('#')[-1].split()[0].upper() in allowed_set]
             after = len(filtered_results)
             if filtered_results:
                 results = filtered_results
@@ -1843,10 +1845,7 @@ def main():
         if OUTPUT_FILTER_COUNTRIES_ENABLED and OUTPUT_ALLOWED_COUNTRIES:
             allowed_set = {c.upper() for c in OUTPUT_ALLOWED_COUNTRIES}
             before = len(scored_nodes)
-            filtered_scored = [
-                it for it in scored_nodes
-                if '#' in it[0] and it[0].split('#')[-1].split()[0].upper() in allowed_set
-            ]
+            filtered_scored = [it for it in scored_nodes if '#' in it[0] and it[0].split('#')[-1].split()[0].upper() in allowed_set]
             after = len(filtered_scored)
             if filtered_scored:
                 scored_nodes = filtered_scored
@@ -1887,7 +1886,6 @@ def main():
             if tcp_lat != float('inf'):
                 line += f" 延迟 {tcp_lat*1000:.2f} ms"
             log("信息", line)
-
     write_ip_txt(final_selected, OUTPUT_FILE,
                  AD_HEADER_ENABLED, AD_HEADER_LINES,
                  AD_FOOTER_ENABLED, AD_FOOTER_LINES,
@@ -1897,33 +1895,23 @@ def main():
                  http_latency_map=http_latency_map,
                  http_jitter_map=http_jitter_map)
     log("信息", f"ip.txt（{len(final_selected)} 个节点）")
-
     ip_list = [node.split(':')[0] for node in final_selected]
-
     batch_update_cloudflare_dns(
-        ip_list,
-        ip_info=avail_ip_info,
-        full_bw_results=bw_results,
-        target_count=None,
-        latency_map=latency_map,
-        http_latency_map=http_latency_map,
-        http_jitter_map=http_jitter_map,
+        ip_list, ip_info=avail_ip_info, full_bw_results=bw_results,
+        target_count=None, latency_map=latency_map,
+        http_latency_map=http_latency_map, http_jitter_map=http_jitter_map,
         final_nodes=final_selected
     )
-
     sync_to_github()
 
 if __name__ == "__main__":
     import atexit
-
     if not acquire_single_instance():
         log("警告", "本程序已在运行，退出")
         sys.exit(0)
     atexit.register(release_single_instance)
-
     enable_log = ENABLE_LOGGING
     log_filename = LOG_FILE
-
     if enable_log:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         log_path = os.path.join(script_dir, log_filename)
@@ -1945,7 +1933,6 @@ if __name__ == "__main__":
                     for f in self.files:
                         f.flush()
             sys.stdout = _Tee(sys.stdout, log_f)
-
             def _close_log():
                 try:
                     sys.stdout = sys.__stdout__
@@ -1953,5 +1940,4 @@ if __name__ == "__main__":
                 except Exception:
                     pass
             atexit.register(_close_log)
-
     main()
