@@ -329,6 +329,7 @@ python3 main.py
 | `BLOCKED_COUNTRIES` | `array` | `BD, BI, BY, CD, CF, CN, CU, DE, ET, HK,`<br>`IR, KP, LY, MO, NG, NL, PK, RU, SD, SO,`<br>`SY, TH, TW, UA, VE, VN, YE, ZW` | DNS 更新时需要剔除的国家代码列表（共 28 个） |
 | `DNS_IP_RISK_FILTER_ENABLED` | `boolean` | `false` | 是否启用 IP 风险等级过滤 |
 | `DNS_IP_RISK_MAX_LEVEL` | `string` | `高风险` | 允许的最高风险等级（可选：极度纯净、纯净、轻微风险、高风险、极度危险） |
+| `IPAPI_IS_KEY` | `string` | `` | ipapi.is 的 API Key，不填则风险查询返回未知 |
 | `IP_RISK_TIMEOUT` | `int` | `3` | IP 风险查询 API 读取超时（秒） |
 
 > **说明**：  
@@ -776,7 +777,7 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 > 各阶段对应域名见上方“涉及域名”列表。
 
 **涉及域名：**  
-`cm.edu.kg` · `ipinfo.io` · `090227.xyz` · `cloudflare.com` · `cloudflare-ech.com` · `cf-ns.com` · `cf-ns.net` · `cf-ns.tech` · `zjiecode.com` · `pages.dev` · `github.com` · `githubusercontent.com`
+`cm.edu.kg` · `ipinfo.io` · `cloudflare.com` · `cloudflare-ech.com` · `cf-ns.com` · `cf-ns.net` · `cf-ns.tech` · `zjiecode.com` · `pages.dev` · `ipapi.is` · `github.com` · `githubusercontent.com`
 
 **建议：**  
 1. 检查本机能否直连上述域名 → 能通设 `DIRECT`，不通设 `PROXY`  
@@ -880,8 +881,9 @@ git branch -M $(git remote show origin | grep "HEAD branch" | cut -d " " -f5) 2>
 
 ## 🙏 致谢
 
-- 节点数据源 & IP 风险检测 API：[cmliussss](https://github.com/cmliussss)
+- 节点数据源 ：[cmliussss](https://github.com/cmliussss)
 - IP 地区校准：[ipinfo.io](https://ipinfo.io/)
+- IP 风险检测 API：[ipapi.is](https://ipapi.is/)
 - 微信通知服务：[WxPusher](https://wxpusher.zjiecode.com/)
 
 ---

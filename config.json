@@ -205,6 +205,9 @@
     "DNS_IP_RISK_MAX_LEVEL": "高风险",
     "_comment_DNS_IP_RISK_MAX_LEVEL": "【仅DNS】允许的最高风险等级（极度纯净 / 纯净 / 轻微风险 / 高风险 / 极度危险）",
 
+    "IPAPI_IS_KEY": "",
+    "_comment_IPAPI_IS_KEY": "ipapi.is 的 API Key，不填则风险查询返回未知",
+
     "IP_RISK_TIMEOUT": 3,
     "_comment_IP_RISK_TIMEOUT": "IP 风险查询 API 读取超时（秒）",
 

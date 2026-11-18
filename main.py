@@ -244,7 +244,7 @@ def load_config():
             "SY", "TH", "TW", "UA", "VE", "VN", "YE", "ZW"
         ],
         "DNS_IP_RISK_FILTER_ENABLED": False, "DNS_IP_RISK_MAX_LEVEL": "高风险",
-        "IP_RISK_TIMEOUT": 3, "DNS_UPDATE_TARGET_COUNT": 15,
+        "IP_RISK_TIMEOUT": 3, "IPAPI_IS_KEY": "", "DNS_UPDATE_TARGET_COUNT": 15,
         "BANDWIDTH_SIZE_MB": 1.0, "BANDWIDTH_TIMEOUT": 3, "BANDWIDTH_RETRY_MAX": 3,
         "BANDWIDTH_RETRY_DELAY": 3,
         "BANDWIDTH_URL_TEMPLATE": "{scheme}://speed.cloudflare.com:{port}/__down?bytes={bytes}",
@@ -346,6 +346,7 @@ BLOCKED_COUNTRIES = cfg["BLOCKED_COUNTRIES"]
 DNS_IP_RISK_FILTER_ENABLED = cfg["DNS_IP_RISK_FILTER_ENABLED"]
 DNS_IP_RISK_MAX_LEVEL = cfg["DNS_IP_RISK_MAX_LEVEL"]
 IP_RISK_TIMEOUT = cfg["IP_RISK_TIMEOUT"]
+IPAPI_IS_KEY = cfg["IPAPI_IS_KEY"]
 DNS_UPDATE_TARGET_COUNT = cfg["DNS_UPDATE_TARGET_COUNT"]
 BANDWIDTH_SIZE_MB = cfg["BANDWIDTH_SIZE_MB"]
 BANDWIDTH_TIMEOUT = cfg["BANDWIDTH_TIMEOUT"]
@@ -525,7 +526,9 @@ def _compute_risk_level(data):
     else: return "极度纯净"
 
 async def get_ip_risk_level_async(session, ip):
-    url = f"https://api.090227.xyz/api/ipapi?ip={ip}"
+    if not IPAPI_IS_KEY:
+        return "未知"
+    url = f"https://api.ipapi.is/?q={ip}&key={IPAPI_IS_KEY}"
     try:
         async with session.get(
             url,
@@ -542,7 +545,7 @@ async def get_ip_risk_level_async(session, ip):
         raise
     except Exception:
         return "未知"
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or "is_proxy" not in data:
         return "未知"
     try:
         return _compute_risk_level(data)
