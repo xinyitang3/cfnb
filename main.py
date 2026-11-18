@@ -212,7 +212,7 @@ def load_config():
         "WXPUSHER_APP_TOKEN": "your_app_token_here",
         "WXPUSHER_UIDS": ["your_uid_here"],
         "WXPUSHER_API_URL": "https://wxpusher.zjiecode.com/api/send/message",
-        "NOTIFY_TIMEOUT": 3, "NOTIFY_CONNECT_TIMEOUT": 3, "CF_ENABLED": True,
+        "NOTIFY_TIMEOUT": 3, "NOTIFY_CONNECT_TIMEOUT": 3, "CF_ENABLED": False,
         "CF_API_TOKEN": "your_CF_API_TOKEN", "CF_ZONE_ID": "your_CF_ZONE_ID",
         "CF_DNS_RECORD_NAME": "your_CF_DNS_RECORD_NAME", "CF_TTL": 60,
         "CF_PROXIED": False, "CF_DNS_CONNECT_TIMEOUT": 3, "CF_DNS_READ_TIMEOUT": 3,

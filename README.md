@@ -357,7 +357,7 @@ python3 main.py
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `CF_ENABLED` | `boolean` | `true` | 是否启用 DNS 自动更新 |
+| `CF_ENABLED` | `boolean` | `false` | 是否启用 DNS 自动更新 |
 | `CF_API_TOKEN` | `string` | `"your_CF_API_TOKEN"` | Cloudflare API 令牌（Zone:DNS:Edit 权限） |
 | `CF_ZONE_ID` | `string` | `"your_CF_ZONE_ID"` | 域名区域 ID |
 | `CF_DNS_RECORD_NAME` | `string` | `"your_CF_DNS_RECORD_NAME"` | 完整子域名 |
