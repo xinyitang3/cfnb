@@ -1105,7 +1105,7 @@ async def run_tcp_tests(nodes, max_workers):
 async def check_availability_async(node_str, local_public_ip=None):
     m = IP_PORT_PATTERN.match(node_str)
     if not m:
-        return (node_str, False, "unknown", {}, [])
+        return (node_str, False, "unknown", {}, [], set())
     ip, port = m.group(1), int(m.group(2))
     test_rounds = max(3, AVAILABILITY_TEST_ROUNDS)
     total_attempts = (AVAILABILITY_INNER_RETRY_MAX + 1) if AVAILABILITY_INNER_RETRY_ENABLED else 1
@@ -1113,6 +1113,7 @@ async def check_availability_async(node_str, local_public_ip=None):
     best_trace = None
     families = set()
     latencies = []
+    ips_seen = set()
     connector = aiohttp.TCPConnector(resolver=PinnedResolver(ip, port), ssl=False)
     session = aiohttp.ClientSession(
         connector=connector, trust_env=False,
@@ -1128,7 +1129,7 @@ async def check_availability_async(node_str, local_public_ip=None):
                         await asyncio.sleep(retry_delay)
                     continue
                 if r["status"] != 200:
-                    return (node_str, False, "unknown", {}, [])
+                    return (node_str, False, "unknown", {}, [], set())
                 server = r["headers"].get("Server", "").lower()
                 trace = r["trace"]
                 if not (server.startswith("cloudflare")
@@ -1139,25 +1140,26 @@ async def check_availability_async(node_str, local_public_ip=None):
                         and trace.get("visit_scheme") == "https"
                         and trace.get("tls") != "off"
                         and trace.get("kex") != "none"):
-                    return (node_str, False, "unknown", {}, [])
+                    return (node_str, False, "unknown", {}, [], set())
                 round_ok = True
                 families.add("ipv6" if ":" in trace["ip"] else "ipv4")
+                ips_seen.add(trace["ip"])
                 if best_trace is None:
                     best_trace = trace
                 if r.get("elapsed_ms") is not None:
                     latencies.append(r["elapsed_ms"])
                 break
             if not round_ok:
-                return (node_str, False, "unknown", {}, [])
+                return (node_str, False, "unknown", {}, [], set())
         if best_trace and families:
-            if local_public_ip and best_trace.get("ip") == local_public_ip:
-                return (node_str, False, "unknown", {}, [])
+            if local_public_ip and local_public_ip in ips_seen:
+                return (node_str, False, "unknown", {}, [], set())
             if len(families) == 2:
                 stack = "dual_stack"
             else:
                 stack = f"{next(iter(families))}_only"
-            return (node_str, True, stack, best_trace, latencies)
-        return (node_str, False, "unknown", {}, [])
+            return (node_str, True, stack, best_trace, latencies, ips_seen)
+        return (node_str, False, "unknown", {}, [], set())
     finally:
         await session.close()
 
@@ -1202,12 +1204,13 @@ async def _get_local_public_ip_async():
 
 async def availability_filter_candidates_async(candidates):
     if not TEST_AVAILABILITY or not candidates:
-        return candidates, {}, {}, {}
+        return candidates, {}, {}, {}, {}
     local_public_ip = await _get_local_public_ip_async()
     passed = []
     ip_info = {}
     avail_latency_map = {}
     avail_jitter_map = {}
+    exit_ips_map = {}
     total = len(candidates)
     completed = 0
     last_print = time.time()
@@ -1221,10 +1224,12 @@ async def availability_filter_candidates_async(candidates):
                 return
             result = await check_availability_async(node, local_public_ip)
             completed += 1
-            node_str, ok, stack, _, latencies = result
+            node_str, ok, stack, _, latencies, ips_seen = result
             if ok:
                 passed.append(node_str)
                 ip_info[node_str] = stack
+                if DNS_IP_RISK_FILTER_ENABLED:
+                    exit_ips_map[node_str] = ips_seen
                 if latencies:
                     avail_latency_map[node_str] = max(latencies)
                     mean = sum(latencies) / len(latencies)
@@ -1237,21 +1242,22 @@ async def availability_filter_candidates_async(candidates):
                 last_print = now
     workers = [asyncio.ensure_future(worker()) for _ in range(min(AVAILABILITY_WORKERS, total))]
     await asyncio.gather(*workers)
-    return passed, ip_info, avail_latency_map, avail_jitter_map
+    return passed, ip_info, avail_latency_map, avail_jitter_map, exit_ips_map
 
 async def availability_filter_with_retry_async(candidates):
     if not TEST_AVAILABILITY or not candidates:
-        return candidates, {}, {}, {}
+        return candidates, {}, {}, {}, {}
     passed = []
     ip_info = {}
     avail_latency_map = {}
     avail_jitter_map = {}
+    exit_ips_map = {}
     for attempt in range(1, AVAILABILITY_RETRY_MAX + 1):
         log("信息", f"反代验证 第 {attempt}/{AVAILABILITY_RETRY_MAX} 轮（{len(candidates)} 候选）")
-        passed, ip_info, avail_latency_map, avail_jitter_map = await availability_filter_candidates_async(candidates)
+        passed, ip_info, avail_latency_map, avail_jitter_map, exit_ips_map = await availability_filter_candidates_async(candidates)
         if passed:
             log("信息", f"反代验证通过 {len(passed)} 个节点")
-            return passed, ip_info, avail_latency_map, avail_jitter_map
+            return passed, ip_info, avail_latency_map, avail_jitter_map, exit_ips_map
         if attempt < AVAILABILITY_RETRY_MAX:
             log("警告", f"本轮反代验证 0 通过，等待 {AVAILABILITY_RETRY_DELAY}s 重试")
             await asyncio.sleep(AVAILABILITY_RETRY_DELAY)
@@ -1260,7 +1266,7 @@ async def availability_filter_with_retry_async(candidates):
         content=f"反代验证经 {AVAILABILITY_RETRY_MAX} 轮重试后仍无节点通过，已跳过过滤，使用原候选列表继续。",
         summary="反代验证全部失败"
     )
-    return candidates, {}, {}, {}
+    return candidates, {}, {}, {}, {}
 
 async def measure_bandwidth_curl_async(node_str):
     m = IP_PORT_PATTERN.match(node_str)
@@ -1370,7 +1376,8 @@ async def bandwidth_filter_async(candidates):
     return results
 
 def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, target_count=None,
-                                latency_map=None, http_latency_map=None, http_jitter_map=None, final_nodes=None):
+                                latency_map=None, http_latency_map=None, http_jitter_map=None,
+                                final_nodes=None, exit_ips_map=None):
     if not CF_ENABLED:
         log("信息", "CF DNS 更新未启用")
         return
@@ -1392,11 +1399,11 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
     if DNS_IP_RISK_FILTER_ENABLED and full_bw_results:
         ip_set = set()
         for node_str, _ in full_bw_results:
-            if ':' in node_str:
-                ip_set.add(node_str.split(':')[0])
+            for eip in (exit_ips_map or {}).get(node_str, set()):
+                ip_set.add(eip)
         if ip_set:
             workers = min(IP_RISK_WORKERS, len(ip_set))
-            log("信息", f"IP 风险查询（{len(ip_set)} IP，并发 {workers}）")
+            log("信息", f"IP 风险查询（{len(ip_set)} 出口 IP，并发 {workers}）")
             risk_map = _run_async(_batch_get_ip_risk_levels_async(list(ip_set), workers))
     if full_bw_results:
         blocked_set = set()
@@ -1427,9 +1434,17 @@ def batch_update_cloudflare_dns(ip_list, ip_info=None, full_bw_results=None, tar
                 risk_fallback_ip_list.append(pure_ip)
                 risk_fallback_node_list.append(node_str)
             if DNS_IP_RISK_FILTER_ENABLED:
-                risk_level = risk_map.get(pure_ip, "未知")
+                exit_ips = (exit_ips_map or {}).get(node_str) or set()
+                if not exit_ips:
+                    node_risk = "未知"
+                else:
+                    levels = [risk_map.get(eip, "未知") for eip in exit_ips]
+                    if "未知" in levels:
+                        node_risk = "未知"
+                    else:
+                        node_risk = max(levels, key=lambda lv: RISK_LEVEL_ORDER.get(lv, 99))
                 max_level = DNS_IP_RISK_MAX_LEVEL
-                if risk_level == "未知" or RISK_LEVEL_ORDER.get(risk_level, 99) > RISK_LEVEL_ORDER.get(max_level, 2):
+                if node_risk == "未知" or RISK_LEVEL_ORDER.get(node_risk, 99) > RISK_LEVEL_ORDER.get(max_level, 2):
                     filtered_by_risk += 1
                     continue
             if record_type == "A":
@@ -1779,7 +1794,7 @@ def main():
     if not candidates:
         log("错误", "没有候选节点，退出")
         sys.exit(0)
-    candidates_after_availability, avail_ip_info, avail_latency_map, avail_jitter_map = _run_async(
+    candidates_after_availability, avail_ip_info, avail_latency_map, avail_jitter_map, exit_ips_map = _run_async(
         availability_filter_with_retry_async(candidates)
     )
     if HTTP_LATENCY_ENABLED:
@@ -1903,7 +1918,7 @@ def main():
         ip_list, ip_info=avail_ip_info, full_bw_results=bw_results,
         target_count=None, latency_map=latency_map,
         http_latency_map=http_latency_map, http_jitter_map=http_jitter_map,
-        final_nodes=final_selected
+        final_nodes=final_selected, exit_ips_map=exit_ips_map
     )
     sync_to_github()
 
